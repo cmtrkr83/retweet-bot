@@ -1,0 +1,46 @@
+=== DEBUG TEST SCRIPTI ===
+
+Twitter/X'te @mebodsgm profilindeyken bu kodu Console'a (F12) yapıştırın:
+
+----------------------------------------
+
+console.log('=== DEBUG TEST BAŞLIYOR ===');
+
+const articles = document.querySelectorAll('article[data-testid="tweet"]');
+console.log(`Toplam ${articles.length} tweet bulundu`);
+
+for (let i = 0; i < Math.min(5, articles.length); i++) {
+  const article = articles[i];
+  console.log(`\n--- Tweet ${i + 1} ---`);
+  
+  const tweetLink = article.querySelector('a[href*="/status/"]');
+  if (tweetLink) {
+    const href = tweetLink.href;
+    const tweetId = href.split('/status/')[1]?.split('?')[0];
+    const usernameFromLink = href.split('/')[3];
+    
+    console.log('Tweet ID:', tweetId);
+    console.log('Username from link:', usernameFromLink);
+    console.log('Tweet linki:', href);
+  }
+  
+  const isReply = article.textContent.includes('Replying to') || 
+                 article.textContent.includes('yanıt olarak');
+  console.log('Reply mi?', isReply);
+  
+  const socialContext = article.querySelector('[data-testid="socialContext"]');
+  if (socialContext) {
+    console.log('Social context:', socialContext.textContent);
+  } else {
+    console.log('Social context: yok');
+  }
+  
+  const retweetButton = article.querySelector('[data-testid="retweet"]');
+  console.log('Retweet butonu var mı?', retweetButton !== null);
+}
+
+console.log('\n=== DEBUG TEST BİTTİ ===');
+
+----------------------------------------
+
+Bu test sonuçlarını bana gönderin!

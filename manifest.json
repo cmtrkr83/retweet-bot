@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Twitter Auto Retweet",
+  "version": "1.11.0",
+  "description": "Belirli bir Twitter hesabının son tweetini otomatik olarak retweet eder. Cem Türker",
+  "permissions": [
+    "storage",
+    "alarms",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://twitter.com/*",
+    "https://x.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

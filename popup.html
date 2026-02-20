@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Twitter Auto Retweet</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      width: 350px;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #ffffff;
+      color: #0f1419;
+    }
+    
+    h1 {
+      font-size: 20px;
+      margin-bottom: 20px;
+      color: #1d9bf0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .logo {
+      font-size: 24px;
+    }
+    
+    .section {
+      margin-bottom: 20px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #eff3f4;
+    }
+    
+    .section:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #536471;
+    }
+    
+    input[type="text"] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #cfd9de;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+    
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #1d9bf0;
+    }
+    
+    button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 20px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .btn-primary {
+      background: #1d9bf0;
+      color: white;
+      margin-bottom: 10px;
+    }
+    
+    .btn-primary:hover {
+      background: #1a8cd8;
+    }
+    
+    .btn-secondary {
+      background: #eff3f4;
+      color: #0f1419;
+    }
+    
+    .btn-secondary:hover {
+      background: #d7dbdf;
+    }
+    
+    .btn-primary:disabled,
+    .btn-secondary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    .status {
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 10px;
+      display: none;
+    }
+    
+    .status.success {
+      background: #e7f5ee;
+      color: #00ba7c;
+      border: 1px solid #00ba7c;
+      display: block;
+    }
+    
+    .status.error {
+      background: #fde7e9;
+      color: #f4212e;
+      border: 1px solid #f4212e;
+      display: block;
+    }
+    
+    .status.info {
+      background: #e5f2ff;
+      color: #1d9bf0;
+      border: 1px solid #1d9bf0;
+      display: block;
+    }
+    
+    .stats {
+      background: #f7f9f9;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    
+    .stat-item {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      color: #536471;
+    }
+    
+    .stat-item:last-child {
+      margin-bottom: 0;
+    }
+    
+    .stat-value {
+      font-weight: 600;
+      color: #0f1419;
+    }
+    
+    .help-text {
+      font-size: 12px;
+      color: #536471;
+      margin-top: 6px;
+      line-height: 1.4;
+    }
+    
+    .select-input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #cfd9de;
+      border-radius: 6px;
+      font-size: 14px;
+      background: white;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    
+    .select-input:focus {
+      outline: none;
+      border-color: #1d9bf0;
+    }
+    
+    .radio-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .radio-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid #cfd9de;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 14px;
+    }
+    
+    .radio-label:hover {
+      background: #f7f9f9;
+      border-color: #1d9bf0;
+    }
+    
+    .radio-label input[type="radio"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #1d9bf0;
+    }
+    
+    .radio-label input[type="radio"]:checked + span {
+      color: #1d9bf0;
+      font-weight: 600;
+    }
+    
+    .spinner {
+      display: none;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #ffffff;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      margin: 0 auto;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    button.loading .spinner {
+      display: block;
+    }
+    
+    button.loading .btn-text {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="logo">🔄</span>
+    Twitter Auto Retweet
+  </h1>
+  
+  <div class="section">
+    <label for="username">Takip Edilecek Kullanıcı Adı</label>
+    <input type="text" id="username" placeholder="kullaniciadi (@ işareti olmadan)" />
+    <div class="help-text">Örnek: elonmusk (@ işareti olmadan yazın)</div>
+  </div>
+  
+  <div class="section">
+    <label for="checkInterval">Kontrol Sıklığı</label>
+    <select id="checkInterval" class="select-input">
+      <option value="15">Her 15 dakikada</option>
+      <option value="30">Her 30 dakikada</option>
+      <option value="60" selected>Her 60 dakikada (1 saat)</option>
+    </select>
+    <div class="help-text">Ne sıklıkla otomatik kontrol yapılsın?</div>
+  </div>
+  
+  <div class="section">
+    <label for="tweetCount">Geriye Dönük Kaç Tweet Retweet Edilsin?</label>
+    <select id="tweetCount" class="select-input">
+      <option value="1">Sadece son tweeti (1 tweet)</option>
+      <option value="2">Son 2 tweeti</option>
+      <option value="3">Son 3 tweeti</option>
+      <option value="5">Son 5 tweeti</option>
+      <option value="10">Son 10 tweeti</option>
+    </select>
+    <div class="help-text">Her kontrolde en fazla bu kadar tweet retweet edilir (reply'ler hariç)</div>
+  </div>
+  
+  <div id="statusMessage" class="status"></div>
+  
+  <div class="section">
+    <button id="saveBtn" class="btn-primary">
+      <div class="spinner"></div>
+      <span class="btn-text">Kaydet</span>
+    </button>
+    <button id="checkBtn" class="btn-secondary">
+      <div class="spinner"></div>
+      <span class="btn-text">Şimdi Kontrol Et</span>
+    </button>
+  </div>
+  
+  <div class="section">
+    <label>İstatistikler</label>
+    <div class="stats">
+      <div class="stat-item">
+        <span>Toplam Retweet:</span>
+        <span class="stat-value" id="totalRetweets">0</span>
+      </div>
+      <div class="stat-item">
+        <span>Son Kontrol:</span>
+        <span class="stat-value" id="lastCheck">Henüz kontrol yapılmadı</span>
+      </div>
+      <div class="stat-item">
+        <span>Son Başarılı:</span>
+        <span class="stat-value" id="lastSuccess">-</span>
+      </div>
+    </div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
