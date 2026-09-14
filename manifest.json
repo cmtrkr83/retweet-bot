@@ -1,18 +1,20 @@
 {
   "manifest_version": 3,
   "name": "Twitter Auto Retweet",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Belirli bir Twitter hesabının son tweetini otomatik olarak retweet eder. Cem Türker",
   "permissions": [
     "storage",
     "alarms",
     "activeTab",
     "scripting",
-    "tabs"
+    "tabs",
+    "cookies"
   ],
   "host_permissions": [
     "https://twitter.com/*",
-    "https://x.com/*"
+    "https://x.com/*",
+    "https://api.fxtwitter.com/*"
   ],
   "background": {
     "service_worker": "background.js"

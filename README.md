@@ -67,18 +67,17 @@ Tüm eklenti dosyalarını bir klasöre kaydedin:
 ## ⚙️ Nasıl Çalışır?
 
 1. **Zamanlayıcı**: Chrome Alarms API ile seçilen sıklıkta (15/30/60 dk) tetiklenir
-2. **Sayfa Kontrolü**: Belirtilen kullanıcının Twitter profiline gider (varsa açık sekmeyi kullanır, yoksa gizli sekme açar)
-3. **Tweet Bulma**: `article[data-testid="tweet"]` ile en yeni tweetleri bulur
-4. **Filtreleme**: Reklam, reply ve geçmişte retweet edilenleri + tweet tipi (orijinal/retweet/ikisi) ayarına göre eler
-5. **Retweet**: `data-testid="retweet"` + `retweetConfirm` butonlarına insan benzeri gecikmelerle tıklar
+2. **Hafif mod (öncelikli, sekme açmaz)**: FxTwitter public API ile son tweetleri JSON olarak çeker (auth gerektirmez), `CreateRetweet` GraphQL çağrısıyla retweet eder (girişli cookie'leri kullanır, ücretli API değil)
+3. **Klasik mod (fallback)**: Hafif mod başarısız olursa (oturum yok, rate-limit, queryId değişimi) eski yönteme düşer — profile gider, `article[data-testid="tweet"]` bulur
+4. **Filtreleme**: Reply ve geçmişte retweet edilenleri + tweet tipi (orijinal/retweet/ikisi) ayarına göre eler (hafif modda reklam dönmez)
+5. **Retweet**: Hafif modda tıklama yok; klasik modda `data-testid="retweet"` + `retweetConfirm` butonlarına insan benzeri gecikmelerle tıklar
 6. **Kayıt**: Tweet ID'sini kaydeder (tekrar retweet etmemek için, son 200 kayıt)
 
 ## 🔒 Güvenlik ve Gizlilik
 
-- ❌ **API kullanmaz** - Token veya şifre gerektirmez
-- ✅ Sadece tarayıcınızda çalışır
+- ❌ **Ücretli API kullanmaz** - Token veya şifre gerektirmez, girişli tarayıcı cookie'siyle çalışır
+- ✅ Hafif modda okuma herkese açık Fx API'den yapılır, yazma sadece kendi oturumunla x.com'a gider
 - ✅ Verileriniz sadece Chrome'un yerel depolama alanında tutulur
-- ✅ Hiçbir veri dışarı gönderilmez
 - ✅ Açık kaynak - kodu inceleyebilirsiniz
 
 ## ⚠️ Önemli Notlar

@@ -67,7 +67,218 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
+// ---- Hafif mod (fetch-based): sekme açmadan çalışır ----
+// Okuma: ücretsiz FxTwitter public API (auth gerektirmez)
+// Yazma: X web GraphQL CreateRetweet (loginli cookie'leri kullanır, ücretli API değil)
+const X_BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
+// queryId'ler X tarafından periyodik döndürülür. Birincil + yedek liste dene, çalışanı cache'le.
+const RETWEET_QUERY_IDS = ['LFho5rIi4xcKO90p9jwG7A'];
+const X_FEATURES = {
+  creator_subscriptions_tweet_preview_api_enabled: true,
+  tweetypie_unmention_optimization_enabled: true,
+  responsive_web_edit_tweet_api_enabled: true,
+  graphql_is_translatable_rweb_tweet_composer_enabled: true,
+  view_counts_everywhere_api_enabled: true,
+  longform_notetweets_consumption_enabled: true,
+  responsive_web_twitter_article_tweet_consumption_enabled: true,
+  tweet_awards_web_tipping_enabled: false,
+  responsive_web_grok_show_grok_translated_post: false,
+  responsive_web_grok_analysis_button_from_backend: false,
+  creator_subscriptions_quote_tweet_preview_enabled: false,
+  longform_notetweets_rich_text_read_enabled: true,
+  longform_notetweets_inline_media_enabled: true,
+  responsive_web_grok_image_annotation_enabled: true,
+  responsive_web_grok_imagine_annotation_enabled: false,
+  responsive_web_grok_community_note_auto_translation_is_enabled: false,
+  responsive_web_elongated_highlights_enabled: false,
+  responsive_web_free_article_data_collection_enabled: false,
+  standardized_nudges_misinfo: true,
+  tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
+  responsive_web_enhance_cards_enabled: false
+};
+
+async function fetchTimelineViaFx(username, count = 10) {
+  const url = `https://api.fxtwitter.com/2/profile/${encodeURIComponent(username)}/statuses?count=${Math.min(Math.max(count, 1), 20)}`;
+  const res = await fetch(url, { method: 'GET' });
+  if (res.status === 204) return [];
+  if (!res.ok) throw new Error(`Fx API hata: HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.code !== 200) throw new Error(`Fx API hata: ${data.code} ${data.message || ''}`);
+  return data.results || [];
+}
+
+async function getXCookies() {
+  const ct0 = await chrome.cookies.get({ url: 'https://x.com', name: 'ct0' });
+  const authToken = await chrome.cookies.get({ url: 'https://x.com', name: 'auth_token' });
+  if (!ct0?.value || !authToken?.value) {
+    throw new Error('X oturumu bulunamadı. Önce x.com\'da giriş yapın (hafif mod cookie gerektirir).');
+  }
+  return { ct0: ct0.value, authToken: authToken.value };
+}
+
+async function retweetViaGraphQL(tweetId) {
+  const { ct0 } = await getXCookies();
+  const stored = await chrome.storage.local.get(['workingRetweetQueryId']);
+  const queryIds = [
+    ...(stored.workingRetweetQueryId ? [stored.workingRetweetQueryId] : []),
+    ...RETWEET_QUERY_IDS
+  ].filter((v, i, a) => a.indexOf(v) === i);
+
+  let lastError = null;
+  for (const qid of queryIds) {
+    try {
+      const res = await fetch(`https://x.com/i/api/graphql/${qid}/CreateRetweet`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'authorization': `Bearer ${X_BEARER}`,
+          'content-type': 'application/json',
+          'x-csrf-token': ct0,
+          'x-twitter-active-user': 'yes',
+          'x-twitter-auth-type': 'OAuth2Session',
+          'x-twitter-client-language': 'tr'
+        },
+        body: JSON.stringify({
+          variables: { tweet_id: tweetId, dark_request: false },
+          features: X_FEATURES,
+          queryId: qid
+        })
+      });
+
+      if (res.status === 404) {
+        lastError = new Error(`queryId geçersiz (404): ${qid}`);
+        continue; // sonraki queryId'yi dene
+      }
+      if (res.status === 403 || res.status === 429) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`X isteği engellendi (HTTP ${res.status}). Rate-limit / bot koruması olabilir. ${txt.slice(0, 120)}`);
+      }
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`GraphQL HTTP ${res.status}: ${txt.slice(0, 200)}`);
+      }
+      const data = await res.json().catch(() => ({}));
+      if (data.errors) {
+        throw new Error(`GraphQL hata: ${JSON.stringify(data.errors).slice(0, 200)}`);
+      }
+      // Başarılı -> çalışan queryId'yi cache'le
+      await chrome.storage.local.set({ workingRetweetQueryId: qid });
+      return { ok: true, queryId: qid };
+    } catch (e) {
+      lastError = e;
+      // 404 dışında auth/rate-limit hatasında diğer ID'yi denemenin anlamı yok
+      if (!String(e.message).includes('404')) throw e;
+    }
+  }
+  throw lastError || new Error('Retweet GraphQL çağrısı başarısız');
+}
+
+async function saveRetweetsToHistory(targetUsername, retweetedIds) {
+  const stored = await chrome.storage.local.get(['retweetHistory']);
+  const retweetHistory = stored.retweetHistory || [];
+  retweetedIds.forEach(tweetId => {
+    retweetHistory.push({ tweetId, username: targetUsername, timestamp: new Date().toISOString() });
+  });
+  if (retweetHistory.length > 200) retweetHistory.splice(0, retweetHistory.length - 200);
+  await chrome.storage.local.set({
+    retweetHistory,
+    lastCheck: new Date().toISOString(),
+    lastSuccess: new Date().toISOString()
+  });
+}
+
+async function checkAndRetweetLight(targetUsername, retweetHistory, tweetCount, retweetType) {
+  // 1) Hafif okuma: Fx API (sekme yok, DOM yok)
+  const items = await fetchTimelineViaFx(targetUsername, Math.max(tweetCount * 2, 5));
+  console.log(`[hafif mod] Fx API'den ${items.length} tweet alındı`);
+
+  const eligible = [];
+  const targetLower = targetUsername.toLowerCase().replace('@', '');
+  for (const item of items) {
+    if (!item?.id) continue;
+    // Zaten retweet edilmiş mi?
+    if (retweetHistory.some(h => h.tweetId === String(item.id))) {
+      console.log(`[hafif mod] ${item.id} zaten geçmişte var, atlanıyor`);
+      continue;
+    }
+    // Reply mi? (Fx: replying_to doluysa reply)
+    if (item.replying_to) {
+      console.log(`[hafif mod] ${item.id} reply, atlanıyor`);
+      continue;
+    }
+    // Orijinal mi / repost mu? (Fx: reposted_by varsa hedef kullanıcının retweet'i)
+    const authorLower = (item.author?.screen_name || '').toLowerCase();
+    const isRepost = Boolean(item.reposted_by) || (authorLower && authorLower !== targetLower);
+    if (retweetType === 'original' && isRepost) {
+      console.log(`[hafif mod] ${item.id} repost, atlanıyor (orijinal modu)`);
+      continue;
+    }
+    if (retweetType === 'retweets' && !isRepost) {
+      console.log(`[hafif mod] ${item.id} orijinal, atlanıyor (retweet modu)`);
+      continue;
+    }
+    eligible.push(String(item.id));
+    if (eligible.length >= tweetCount) break;
+  }
+
+  if (eligible.length === 0) {
+    await chrome.storage.local.set({ lastCheck: new Date().toISOString() });
+    return { success: false, message: `@${targetUsername} için retweet edilebilir yeni tweet yok (hafif mod, ${items.length} kontrol edildi).`, mode: 'light' };
+  }
+
+  // 2) Hafif yazma: GraphQL (tıklama yok, sekme yok)
+  const retweetedIds = [];
+  for (const tweetId of eligible) {
+    // Rate-limit dostu küçük gecikme
+    await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
+    await retweetViaGraphQL(tweetId);
+    console.log(`[hafif mod] retweet OK: ${tweetId}`);
+    retweetedIds.push(tweetId);
+  }
+
+  await saveRetweetsToHistory(targetUsername, retweetedIds);
+  return {
+    success: true,
+    message: `${retweetedIds.length} tweet retweet edildi (hafif mod, sekme açılmadı)!`,
+    retweetedIds,
+    mode: 'light'
+  };
+}
+
 async function checkAndRetweet() {
+  try {
+    console.log('checkAndRetweet başladı (önce hafif mod denenecek)');
+
+    const data = await chrome.storage.local.get(['targetUsername', 'retweetHistory', 'tweetCount', 'retweetType']);
+    if (!data.targetUsername) {
+      return { success: false, message: 'Lütfen önce takip edilecek kullanıcı adını ayarlayın' };
+    }
+    const retweetHistory = data.retweetHistory || [];
+    const tweetCount = data.tweetCount || 1;
+    const retweetType = data.retweetType || 'original';
+
+    try {
+      const lightResult = await checkAndRetweetLight(data.targetUsername, retweetHistory, tweetCount, retweetType);
+      console.log('Hafif mod sonucu:', lightResult);
+      // Hafif modda "yeni tweet yok" da geçerli sonuçtur, heavy'e düşme
+      if (lightResult.success || !lightResult.fallbackToHeavy) {
+        // Yeni tweet yoksa da lightResult dön (fallback gereksiz)
+        if (lightResult.success || lightResult.mode === 'light') return lightResult;
+      }
+    } catch (lightError) {
+      console.warn('Hafif mod başarısız, klasik moda düşülüyor:', lightError.message);
+      // Eğer cookie yoksa kullanıcıya net söyle ama yine de heavy dene
+    }
+
+    console.log('Klasik moda geçiliyor (heavy)...');
+    return await checkAndRetweetHeavy();
+  } catch (error) {
+    console.error('checkAndRetweet hatası:', error);
+    return { success: false, message: error.message };
+  }
+}
+
+async function checkAndRetweetHeavy() {
   try {
     console.log('checkAndRetweet başladı');
     
