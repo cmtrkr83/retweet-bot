@@ -4,13 +4,13 @@ Belirli bir Twitter/X hesabının son tweetini otomatik olarak retweet eden Chro
 
 ## ✨ Özellikler
 
-- 🔄 **Otomatik Retweet**: Her saat başında belirttiğiniz hesabın tweetlerini retweet eder
+- 🔄 **Otomatik Retweet**: Seçtiğiniz sıklıkta (15/30/60 dk) belirttiğiniz hesabın tweetlerini retweet eder
 - 🔢 **Ayarlanabilir Sayı**: 1-10 arası geriye dönük tweet sayısı seçebilirsiniz
-- 🎯 **Tweet Tipi Seçimi**: 
+- 🎯 **Tweet Tipi Seçimi**:
   - Sadece orijinal tweetler
   - Sadece kullanıcının retweet ettikleri
   - Her ikisi birden
-- 💾 **Geçmiş Kaydı**: Hangi tweetlerin retweet edildiğini kaydeder (tekrar retweet etmez)
+- 💾 **Geçmiş Kaydı**: Hangi tweetlerin retweet edildiğini kaydeder (tekrar retweet etmez, son 200 kayıt tutulur)
 - 🎯 **Akıllı Kontrol**: Aynı tweeti birden fazla kez retweet etmez
 - 🤖 **İnsan Benzeri**: Rastgele gecikmelerle doğal davranış sergiler
 - 📊 **İstatistikler**: Toplam retweet sayısı ve son kontrol zamanı
@@ -44,9 +44,10 @@ Tüm eklenti dosyalarını bir klasöre kaydedin:
 1. Chrome araç çubuğunda eklenti ikonuna (🔄) tıklayın
 2. **"Takip Edilecek Kullanıcı Adı"** alanına Twitter kullanıcı adını girin
    - Örnek: `elonmusk` (@ işareti olmadan)
-3. **"Geriye Dönük Kaç Tweet Retweet Edilsin?"** seçeneğinden istediğiniz sayıyı seçin
+3. **"Kontrol Sıklığı"** seçeneğinden 15 / 30 / 60 dakika seçin
+4. **"Geriye Dönük Kaç Tweet Retweet Edilsin?"** seçeneğinden istediğiniz sayıyı seçin
    - Örnek: Son 3 tweeti retweet etmek için "Son 3 tweeti" seçin
-4. **"Hangi Tweetler Retweet Edilsin?"** bölümünden istediğiniz tipi seçin:
+5. **"Hangi Tweetler Retweet Edilsin?"** bölümünden istediğiniz tipi seçin:
    - **Sadece kendi yazdığı tweetler**: Kullanıcının orijinal tweetleri
    - **Sadece retweet ettikleri**: Kullanıcının başkalarından retweet ettikleri
    - **Her ikisi**: Hem orijinal tweetler hem de retweetler
@@ -54,9 +55,9 @@ Tüm eklenti dosyalarını bir klasöre kaydedin:
 
 ### Otomatik Çalışma
 
-- Eklenti her saat başında otomatik olarak kontrol yapar
+- Eklenti seçtiğiniz sıklıkta (15/30/60 dk) otomatik olarak kontrol yapar
 - Yeni tweet varsa ve daha önce retweet edilmemişse otomatik retweet eder
-- Twitter/X sekmesi açık olmalıdır (arka planda çalışabilir)
+- Reply'ler ve reklam/promoted tweet'ler atlanır
 
 ### Manuel Kontrol
 
@@ -65,12 +66,12 @@ Tüm eklenti dosyalarını bir klasöre kaydedin:
 
 ## ⚙️ Nasıl Çalışır?
 
-1. **Zamanlayıcı**: Chrome Alarms API ile her saat başında tetiklenir
-2. **Sayfa Kontrolü**: Belirtilen kullanıcının Twitter profiline gider
-3. **Tweet Bulma**: En yeni tweeti (en üstteki) bulur
-4. **Geçmiş Kontrolü**: Bu tweet daha önce retweet edilmiş mi kontrol eder
-5. **Retweet**: Eğer yeni bir tweet ise, retweet butonuna tıklar
-6. **Kayıt**: Tweet ID'sini kaydeder (tekrar retweet etmemek için)
+1. **Zamanlayıcı**: Chrome Alarms API ile seçilen sıklıkta (15/30/60 dk) tetiklenir
+2. **Sayfa Kontrolü**: Belirtilen kullanıcının Twitter profiline gider (varsa açık sekmeyi kullanır, yoksa gizli sekme açar)
+3. **Tweet Bulma**: `article[data-testid="tweet"]` ile en yeni tweetleri bulur
+4. **Filtreleme**: Reklam, reply ve geçmişte retweet edilenleri + tweet tipi (orijinal/retweet/ikisi) ayarına göre eler
+5. **Retweet**: `data-testid="retweet"` + `retweetConfirm` butonlarına insan benzeri gecikmelerle tıklar
+6. **Kayıt**: Tweet ID'sini kaydeder (tekrar retweet etmemek için, son 200 kayıt)
 
 ## 🔒 Güvenlik ve Gizlilik
 
@@ -85,7 +86,7 @@ Tüm eklenti dosyalarını bir klasöre kaydedin:
 1. **Twitter/X Oturum Açık Olmalı**: Tarayıcınızda Twitter/X'te oturum açmış olmanız gerekir
 2. **Sekme Açık Olabilir**: Twitter/X sekmesi kapalı olsa bile çalışır (gerekirse yeni sekme açar)
 3. **Rate Limiting**: Twitter'ın bot karşıtı sistemlerine takılmamak için insan benzeri gecikmeler eklenmiştir
-4. **Saatlik Kontrol**: Her saat başında bir kez kontrol eder (spam'den kaçınmak için)
+4. **Saatlik Kontrol**: Seçtiğiniz sıklıkta (15/30/60 dk) bir kez kontrol eder (spam'den kaçınmak için)
 
 ## 🛠️ Sorun Giderme
 
@@ -94,8 +95,8 @@ Tüm eklenti dosyalarını bir klasöre kaydedin:
 - Twitter/X sayfasının tamamen yüklendiğinden emin olun
 
 ### Yanlış Kullanıcının Tweeti Retweet Ediliyor
-- Eklenti artık sadece belirtilen kullanıcının **kendi orijinal tweetlerini** retweet eder
-- Reply'ler, başkalarının retweet'leri veya mention'lar görmezden gelinir
+- Tweet tipi ayarını kontrol edin (sadece orijinal / sadece retweet / her ikisi)
+- Reply'ler görmezden gelinir
 - Eğer sorun devam ediyorsa, eklentiyi kaldırıp tekrar yükleyin
 
 ### "Retweet butonu bulunamadı" Hatası

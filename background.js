@@ -37,7 +37,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'getStats') {
-    chrome.storage.local.get(['retweetHistory', 'targetUsername', 'lastCheck', 'tweetCount'], (data) => {
+    chrome.storage.local.get(['retweetHistory', 'targetUsername', 'lastCheck', 'lastSuccess', 'tweetCount', 'retweetType'], (data) => {
       sendResponse(data);
     });
     return true;
@@ -45,11 +45,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'saveSettings') {
     const checkInterval = request.checkInterval || 60;
+    const retweetType = request.retweetType || 'original';
     
     chrome.storage.local.set({
       targetUsername: request.username,
       tweetCount: request.tweetCount || 1,
-      checkInterval: checkInterval
+      checkInterval: checkInterval,
+      retweetType: retweetType
     }, () => {
       // Alarm'ı yeniden kur
       chrome.alarms.clear('checkTweets', () => {
@@ -70,8 +72,8 @@ async function checkAndRetweet() {
     console.log('checkAndRetweet başladı');
     
     // Ayarları al
-    const data = await chrome.storage.local.get(['targetUsername', 'retweetHistory', 'tweetCount']);
-    console.log('Ayarlar alındı:', { username: data.targetUsername, tweetCount: data.tweetCount });
+    const data = await chrome.storage.local.get(['targetUsername', 'retweetHistory', 'tweetCount', 'retweetType']);
+    console.log('Ayarlar alındı:', { username: data.targetUsername, tweetCount: data.tweetCount, retweetType: data.retweetType });
     
     if (!data.targetUsername) {
       console.log('Kullanıcı adı ayarlanmamış');
@@ -80,6 +82,7 @@ async function checkAndRetweet() {
     
     const retweetHistory = data.retweetHistory || [];
     const tweetCount = data.tweetCount || 1;
+    const retweetType = data.retweetType || 'original';
     
     console.log(`Retweet geçmişinde ${retweetHistory.length} kayıt var`);
     
@@ -124,15 +127,15 @@ async function checkAndRetweet() {
       
       chrome.tabs.onUpdated.addListener(listener);
       
-      // Timeout - 20 saniye
+      // Timeout - 15 saniye (MV3 service worker ömrü için kısa tutuldu)
       setTimeout(() => {
         if (!completed) {
           completed = true;
           chrome.tabs.onUpdated.removeListener(listener);
-          console.log('Sayfa yükleme timeout (20 saniye)');
+          console.log('Sayfa yükleme timeout (15 saniye)');
           resolve();
         }
-      }, 20000);
+      }, 15000);
     });
     
     // Twitter'ın içeriğini yüklemesini bekle - tweet'lerin DOM'a gelmesini kontrol et
@@ -140,8 +143,8 @@ async function checkAndRetweet() {
     let tweetsLoaded = false;
     
     for (let i = 0; i < 10; i++) {
-      // Her 1 saniyede bir kontrol et
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Her 1.5 saniyede bir kontrol et (MV3 worker ömrü için toplam ~15sn)
+      await new Promise(resolve => setTimeout(resolve, 1500));
       
       try {
         const checkResults = await chrome.scripting.executeScript({
@@ -152,10 +155,10 @@ async function checkAndRetweet() {
           }
         });
         
-        const tweetCount = checkResults[0].result;
-        console.log(`Tweet kontrolü ${i + 1}/10: ${tweetCount} tweet bulundu`);
+        const tweetCountInPage = checkResults[0].result;
+        console.log(`Tweet kontrolü ${i + 1}/10: ${tweetCountInPage} tweet bulundu`);
         
-        if (tweetCount > 0) {
+        if (tweetCountInPage > 0) {
           tweetsLoaded = true;
           console.log('✓ Tweetler yüklendi!');
           break;
@@ -178,7 +181,7 @@ async function checkAndRetweet() {
     const results = await chrome.scripting.executeScript({
       target: { tabId: targetTab.id },
       func: findAndRetweetLatest,
-      args: [data.targetUsername, retweetHistory, tweetCount]
+      args: [data.targetUsername, retweetHistory, tweetCount, retweetType]
     });
     
     console.log('Script çalıştırıldı, sonuç alındı');
@@ -199,8 +202,8 @@ async function checkAndRetweet() {
       });
       
       // Son 200 retweet'i sakla
-      if (retweetHistory.length > 50) {
-        retweetHistory.splice(0, retweetHistory.length - 50);
+      if (retweetHistory.length > 200) {
+        retweetHistory.splice(0, retweetHistory.length - 200);
       }
       
       await chrome.storage.local.set({
@@ -228,7 +231,7 @@ async function checkAndRetweet() {
 }
 
 // Sayfa içinde çalışacak fonksiyon
-function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount) {
+function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retweetType = 'original') {
   return new Promise((resolve) => {
     try {
       // Önce doğru sayfada olup olmadığını kontrol et
@@ -274,16 +277,22 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount) {
         }
 
         
-        // Promoted/Reklam tweet kontrolü - birden fazla yöntemle
-        const isPromoted = 
-          article.querySelector('[data-testid="promotedIndicator"]') !== null ||
-          article.textContent.includes('Promoted') ||
-		  article.textContent.includes('Reklam') ||
-		  article.textContent.includes('bahis') ||
-		  article.textContent.includes('finans') ||
-          article.textContent.includes('Sponsorlu') ||
-          article.textContent.includes('Ad') ||
-          article.querySelector('svg[aria-label="Promoted"]') !== null;
+        // Promoted/Reklam tweet kontrolü - sadece güvenilir göstergelere bak
+        // NOT: 'Ad', 'finans', 'bahis' gibi genel kelimeler bilinçli olarak kontrol edilmiyor
+        // (normal tweet'lerde geçebileceği için yanlış eleme yapıyordu)
+        const promotedIndicator = article.querySelector('[data-testid="promotedIndicator"]');
+        const promotedSvg = article.querySelector('svg[aria-label="Promoted"], svg[aria-label="Sponsored"], svg[aria-label="Sponsorlu"], svg[aria-label="Reklam"]');
+        let hasPromotedLabel = false;
+        // Sadece tek kelimelik "Ad" / "Promoted" / "Sponsored" etiketlerini ara, substring değil
+        const spans = article.querySelectorAll('span');
+        for (const span of spans) {
+          const t = span.textContent.trim();
+          if (t === 'Ad' || t === 'Promoted' || t === 'Sponsored' || t === 'Sponsorlu' || t === 'Reklam') {
+            hasPromotedLabel = true;
+            break;
+          }
+        }
+        const isPromoted = promotedIndicator !== null || promotedSvg !== null || hasPromotedLabel;
         
         if (isPromoted) {
           console.log(`Tweet ${currentTweetId} bir reklam (promoted), atlanıyor`);
@@ -297,12 +306,33 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount) {
           continue;
         }
         
-        // Reply mi kontrol et - reply'leri atla
-        const isReply = article.textContent.includes('Replying to') || 
-                       article.textContent.includes('yanıt olarak');
+        // Reply mi kontrol et (Türkçe + İngilizce, büyük/küçük harf duyarsız)
+        const articleTextLower = article.textContent.toLowerCase();
+        const isReply = articleTextLower.includes('replying to') ||
+                       articleTextLower.includes('yanıt olarak') ||
+                       articleTextLower.includes('yanit olarak');
         
         if (isReply) {
           console.log(`Tweet ${currentTweetId} bir reply, atlanıyor`);
+          continue;
+        }
+
+        // Orijinal tweet mi, yoksa hedef kullanıcının retweet'i mi? (socialContext)
+        const socialContextEl = article.querySelector('[data-testid="socialContext"]');
+        const socialText = socialContextEl ? socialContextEl.textContent.toLowerCase() : '';
+        const isRepostByUser = socialText.includes('repost') ||
+                               socialText.includes('reposted') ||
+                               socialText.includes('retweet') ||
+                               socialText.includes('yeniden gönder') ||
+                               socialText.includes('tekrar paylaştı');
+
+        if (retweetType === 'original' && isRepostByUser) {
+          console.log(`Tweet ${currentTweetId} hedef kullanıcının retweet'i, atlanıyor (sadece orijinal modu)`);
+          continue;
+        }
+
+        if (retweetType === 'retweets' && !isRepostByUser) {
+          console.log(`Tweet ${currentTweetId} orijinal tweet, atlanıyor (sadece retweet modu)`);
           continue;
         }
         

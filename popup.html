@@ -270,6 +270,25 @@
     <div class="help-text">Her kontrolde en fazla bu kadar tweet retweet edilir (reply'ler hariç)</div>
   </div>
   
+  <div class="section">
+    <label>Hangi Tweetler Retweet Edilsin?</label>
+    <div class="radio-group">
+      <label class="radio-label">
+        <input type="radio" name="retweetType" value="original" checked />
+        <span>Sadece kendi yazdığı tweetler</span>
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="retweetType" value="retweets" />
+        <span>Sadece retweet ettikleri</span>
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="retweetType" value="both" />
+        <span>Her ikisi</span>
+      </label>
+    </div>
+    <div class="help-text">Hedef hesabın orijinal tweetleri mi, başkalarından retweet ettikleri mi alınsın?</div>
+  </div>
+  
   <div id="statusMessage" class="status"></div>
   
   <div class="section">

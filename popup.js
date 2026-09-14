@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const username = usernameInput.value.trim().replace('@', '');
     const tweetCount = parseInt(tweetCountSelect.value);
     const checkInterval = parseInt(checkIntervalSelect.value);
+    const retweetType = document.querySelector('input[name="retweetType"]:checked')?.value || 'original';
     
     if (!username) {
       showStatus('Lütfen bir kullanıcı adı girin', 'error');
@@ -31,7 +32,8 @@ document.addEventListener('DOMContentLoaded', () => {
         action: 'saveSettings',
         username: username,
         tweetCount: tweetCount,
-        checkInterval: checkInterval
+        checkInterval: checkInterval,
+        retweetType: retweetType
       });
       
       if (response && response.success) {
@@ -93,7 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function loadSettings() {
-  chrome.storage.local.get(['targetUsername', 'tweetCount', 'checkInterval'], (data) => {
+  chrome.storage.local.get(['targetUsername', 'tweetCount', 'checkInterval', 'retweetType'], (data) => {
     if (data.targetUsername) {
       document.getElementById('username').value = data.targetUsername;
     }
@@ -102,6 +104,10 @@ function loadSettings() {
     }
     if (data.checkInterval) {
       document.getElementById('checkInterval').value = data.checkInterval.toString();
+    }
+    if (data.retweetType) {
+      const radio = document.querySelector(`input[name="retweetType"][value="${data.retweetType}"]`);
+      if (radio) radio.checked = true;
     }
   });
 }
