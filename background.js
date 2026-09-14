@@ -17,7 +17,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'checkTweets') {
     console.log('Otomatik kontrol başlatılıyor...');
     try {
-      const result = await checkAndRetweet();
+      const result = await checkAndRetweet('auto');
       console.log('Otomatik kontrol tamamlandı:', result);
     } catch (error) {
       console.error('Otomatik kontrol hatası:', error);
@@ -28,7 +28,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // Manuel kontrol için mesaj dinleyici
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'manualCheck') {
-    checkAndRetweet().then(result => {
+    checkAndRetweet('manual').then(result => {
       sendResponse(result);
     }).catch(error => {
       sendResponse({ success: false, message: 'Hata: ' + error.message });
@@ -37,7 +37,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'getStats') {
-    chrome.storage.local.get(['retweetHistory', 'targetUsername', 'lastCheck', 'lastSuccess', 'tweetCount', 'retweetType'], (data) => {
+    chrome.storage.local.get(['retweetHistory', 'targetUsername', 'lastCheck', 'lastSuccess', 'tweetCount', 'retweetType', 'checkInterval', 'lastRun', 'runHistory', 'totalStats'], (data) => {
       sendResponse(data);
     });
     return true;
@@ -187,23 +187,69 @@ async function saveRetweetsToHistory(targetUsername, retweetedIds) {
   });
 }
 
+// Detaylı sayaç kaydı: her kontrolün özetini lastRun + runHistory + totalStats'e yazar
+async function recordRun(run) {
+  const stored = await chrome.storage.local.get(['runHistory', 'totalStats']);
+  const runHistory = stored.runHistory || [];
+  const totalStats = stored.totalStats || { totalChecks: 0, totalChecked: 0, totalRetweeted: 0 };
+
+  const entry = {
+    timestamp: new Date().toISOString(),
+    trigger: run.trigger || 'manual',
+    username: run.username || '',
+    mode: run.mode || 'none',
+    success: Boolean(run.success),
+    checkedCount: run.checkedCount || 0,
+    eligibleCount: run.eligibleCount || 0,
+    retweetedCount: (run.retweetedIds || []).length,
+    retweetedIds: run.retweetedIds || [],
+    skippedAlready: run.skippedAlready || 0,
+    skippedReply: run.skippedReply || 0,
+    skippedRepost: run.skippedRepost || 0,
+    skippedAd: run.skippedAd || 0,
+    message: run.message || '',
+    durationMs: run.durationMs || 0
+  };
+
+  runHistory.unshift(entry);
+  if (runHistory.length > 20) runHistory.length = 20;
+
+  totalStats.totalChecks += 1;
+  totalStats.totalChecked += entry.checkedCount;
+  totalStats.totalRetweeted += entry.retweetedCount;
+  totalStats.lastCheck = entry.timestamp;
+  if (entry.retweetedCount > 0) totalStats.lastSuccess = entry.timestamp;
+
+  await chrome.storage.local.set({
+    lastRun: entry,
+    runHistory,
+    totalStats,
+    lastCheck: entry.timestamp,
+    ...(entry.retweetedCount > 0 ? { lastSuccess: entry.timestamp } : {})
+  });
+  return entry;
+}
+
 async function checkAndRetweetLight(targetUsername, retweetHistory, tweetCount, retweetType) {
   // 1) Hafif okuma: Fx API (sekme yok, DOM yok)
   const items = await fetchTimelineViaFx(targetUsername, Math.max(tweetCount * 2, 5));
   console.log(`[hafif mod] Fx API'den ${items.length} tweet alındı`);
 
   const eligible = [];
+  let skippedAlready = 0, skippedReply = 0, skippedRepost = 0;
   const targetLower = targetUsername.toLowerCase().replace('@', '');
   for (const item of items) {
     if (!item?.id) continue;
     // Zaten retweet edilmiş mi?
     if (retweetHistory.some(h => h.tweetId === String(item.id))) {
       console.log(`[hafif mod] ${item.id} zaten geçmişte var, atlanıyor`);
+      skippedAlready++;
       continue;
     }
     // Reply mi? (Fx: replying_to doluysa reply)
     if (item.replying_to) {
       console.log(`[hafif mod] ${item.id} reply, atlanıyor`);
+      skippedReply++;
       continue;
     }
     // Orijinal mi / repost mu? (Fx: reposted_by varsa hedef kullanıcının retweet'i)
@@ -211,19 +257,30 @@ async function checkAndRetweetLight(targetUsername, retweetHistory, tweetCount, 
     const isRepost = Boolean(item.reposted_by) || (authorLower && authorLower !== targetLower);
     if (retweetType === 'original' && isRepost) {
       console.log(`[hafif mod] ${item.id} repost, atlanıyor (orijinal modu)`);
+      skippedRepost++;
       continue;
     }
     if (retweetType === 'retweets' && !isRepost) {
       console.log(`[hafif mod] ${item.id} orijinal, atlanıyor (retweet modu)`);
+      skippedRepost++;
       continue;
     }
     eligible.push(String(item.id));
     if (eligible.length >= tweetCount) break;
   }
 
+  const stats = {
+    checkedCount: items.length,
+    eligibleCount: eligible.length,
+    skippedAlready,
+    skippedReply,
+    skippedRepost,
+    skippedAd: 0 // hafif modda reklam dönmez
+  };
+
   if (eligible.length === 0) {
     await chrome.storage.local.set({ lastCheck: new Date().toISOString() });
-    return { success: false, message: `@${targetUsername} için retweet edilebilir yeni tweet yok (hafif mod, ${items.length} kontrol edildi).`, mode: 'light' };
+    return { success: false, message: `@${targetUsername} için retweet edilebilir yeni tweet yok (hafif mod, ${items.length} kontrol edildi).`, mode: 'light', retweetedIds: [], ...stats };
   }
 
   // 2) Hafif yazma: GraphQL (tıklama yok, sekme yok)
@@ -241,17 +298,21 @@ async function checkAndRetweetLight(targetUsername, retweetHistory, tweetCount, 
     success: true,
     message: `${retweetedIds.length} tweet retweet edildi (hafif mod, sekme açılmadı)!`,
     retweetedIds,
-    mode: 'light'
+    mode: 'light',
+    ...stats
   };
 }
 
-async function checkAndRetweet() {
+async function checkAndRetweet(trigger = 'manual') {
+  const startMs = Date.now();
   try {
     console.log('checkAndRetweet başladı (önce hafif mod denenecek)');
 
     const data = await chrome.storage.local.get(['targetUsername', 'retweetHistory', 'tweetCount', 'retweetType']);
     if (!data.targetUsername) {
-      return { success: false, message: 'Lütfen önce takip edilecek kullanıcı adını ayarlayın' };
+      const fail = { success: false, message: 'Lütfen önce takip edilecek kullanıcı adını ayarlayın', mode: 'none', retweetedIds: [], checkedCount: 0, eligibleCount: 0, skippedAlready: 0, skippedReply: 0, skippedRepost: 0, skippedAd: 0 };
+      const entry = await recordRun({ ...fail, trigger, username: '', durationMs: Date.now() - startMs });
+      return { ...fail, stats: entry };
     }
     const retweetHistory = data.retweetHistory || [];
     const tweetCount = data.tweetCount || 1;
@@ -261,9 +322,9 @@ async function checkAndRetweet() {
       const lightResult = await checkAndRetweetLight(data.targetUsername, retweetHistory, tweetCount, retweetType);
       console.log('Hafif mod sonucu:', lightResult);
       // Hafif modda "yeni tweet yok" da geçerli sonuçtur, heavy'e düşme
-      if (lightResult.success || !lightResult.fallbackToHeavy) {
-        // Yeni tweet yoksa da lightResult dön (fallback gereksiz)
-        if (lightResult.success || lightResult.mode === 'light') return lightResult;
+      if (lightResult.success || lightResult.mode === 'light') {
+        const entry = await recordRun({ ...lightResult, trigger, username: data.targetUsername, durationMs: Date.now() - startMs });
+        return { ...lightResult, stats: entry };
       }
     } catch (lightError) {
       console.warn('Hafif mod başarısız, klasik moda düşülüyor:', lightError.message);
@@ -271,14 +332,16 @@ async function checkAndRetweet() {
     }
 
     console.log('Klasik moda geçiliyor (heavy)...');
-    return await checkAndRetweetHeavy();
+    const heavyResult = await checkAndRetweetHeavy(trigger, startMs);
+    return heavyResult;
   } catch (error) {
     console.error('checkAndRetweet hatası:', error);
-    return { success: false, message: error.message };
+    const entry = await recordRun({ success: false, message: error.message, mode: 'none', trigger, username: '', durationMs: Date.now() - startMs });
+    return { success: false, message: error.message, stats: entry };
   }
 }
 
-async function checkAndRetweetHeavy() {
+async function checkAndRetweetHeavy(trigger = 'manual', startMs = Date.now()) {
   try {
     console.log('checkAndRetweet başladı');
     
@@ -399,6 +462,20 @@ async function checkAndRetweetHeavy() {
     
     const result = results[0].result;
     console.log('Sonuç:', result);
+    const pageStats = result.stats || {};
+    const baseStats = {
+      username: data.targetUsername,
+      trigger,
+      mode: 'heavy',
+      checkedCount: pageStats.checkedCount || 0,
+      eligibleCount: pageStats.eligibleCount ?? (result.retweetedIds || []).length,
+      retweetedIds: result.retweetedIds || [],
+      skippedAlready: pageStats.skippedAlready || 0,
+      skippedReply: pageStats.skippedReply || 0,
+      skippedRepost: pageStats.skippedRepost || 0,
+      skippedAd: pageStats.skippedAd || 0,
+      durationMs: Date.now() - startMs
+    };
     
     if (result.success && result.retweetedIds && result.retweetedIds.length > 0) {
       console.log(`${result.retweetedIds.length} tweet retweet edildi`);
@@ -424,20 +501,23 @@ async function checkAndRetweetHeavy() {
       });
       
       console.log('Geçmiş kaydedildi');
+      const entry = await recordRun({ ...baseStats, success: true, message: result.message });
+      return { ...result, mode: 'heavy', ...baseStats, success: true, stats: entry };
     } else {
       console.log('Retweet edilecek yeni tweet bulunamadı');
       
       await chrome.storage.local.set({
         lastCheck: new Date().toISOString()
       });
+      const entry = await recordRun({ ...baseStats, success: false, message: result.message });
+      return { ...result, mode: 'heavy', ...baseStats, success: false, stats: entry };
     }
-    
-    return result;
     
   } catch (error) {
     console.error('checkAndRetweet hatası:', error);
     console.error('Hata detayı:', error.stack);
-    return { success: false, message: error.message };
+    const entry = await recordRun({ success: false, message: error.message, mode: 'heavy', trigger, username: '', durationMs: Date.now() - startMs });
+    return { success: false, message: error.message, stats: entry };
   }
 }
 
@@ -461,7 +541,7 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
       const articles = document.querySelectorAll('article[data-testid="tweet"]');
       
       if (articles.length === 0) {
-        resolve({ success: false, message: 'Tweet bulunamadı. Sayfa yükleniyor olabilir.' });
+        resolve({ success: false, message: 'Tweet bulunamadı. Sayfa yükleniyor olabilir.', stats: { checkedCount: 0, eligibleCount: 0, skippedAlready: 0, skippedReply: 0, skippedRepost: 0, skippedAd: 0 } });
         return;
       }
       
@@ -469,6 +549,7 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
       
       // Uygun tweetleri bul
       const eligibleTweets = [];
+      let skippedAd = 0, skippedAlready = 0, skippedReply = 0, skippedRepost = 0;
       
       for (const article of articles) {
         // Tweet linkini bul
@@ -507,6 +588,7 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
         
         if (isPromoted) {
           console.log(`Tweet ${currentTweetId} bir reklam (promoted), atlanıyor`);
+          skippedAd++;
           continue;
         }
         
@@ -514,6 +596,7 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
         const alreadyRetweeted = retweetHistory.some(item => item.tweetId === currentTweetId);
         if (alreadyRetweeted) {
           console.log(`Tweet ${currentTweetId} zaten retweet edilmiş, atlanıyor`);
+          skippedAlready++;
           continue;
         }
         
@@ -525,6 +608,7 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
         
         if (isReply) {
           console.log(`Tweet ${currentTweetId} bir reply, atlanıyor`);
+          skippedReply++;
           continue;
         }
 
@@ -539,11 +623,13 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
 
         if (retweetType === 'original' && isRepostByUser) {
           console.log(`Tweet ${currentTweetId} hedef kullanıcının retweet'i, atlanıyor (sadece orijinal modu)`);
+          skippedRepost++;
           continue;
         }
 
         if (retweetType === 'retweets' && !isRepostByUser) {
           console.log(`Tweet ${currentTweetId} orijinal tweet, atlanıyor (sadece retweet modu)`);
+          skippedRepost++;
           continue;
         }
         
@@ -565,7 +651,8 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
       if (eligibleTweets.length === 0) {
         resolve({ 
           success: false, 
-          message: `@${targetUsername} için retweet edilebilir tweet bulunamadı. Toplam ${articles.length} tweet kontrol edildi.` 
+          message: `@${targetUsername} için retweet edilebilir tweet bulunamadı. Toplam ${articles.length} tweet kontrol edildi.`,
+          stats: { checkedCount: articles.length, eligibleCount: 0, skippedAlready, skippedReply, skippedRepost, skippedAd }
         });
         return;
       }
@@ -581,7 +668,8 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
           resolve({
             success: true,
             message: message,
-            retweetedIds: retweetedIds
+            retweetedIds: retweetedIds,
+            stats: { checkedCount: articles.length, eligibleCount: eligibleTweets.length, skippedAlready, skippedReply, skippedRepost, skippedAd }
           });
           return;
         }

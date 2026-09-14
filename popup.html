@@ -153,6 +153,22 @@
       font-weight: 600;
       color: #0f1419;
     }
+
+    .history-row {
+      padding: 8px 0;
+      border-bottom: 1px solid #eff3f4;
+      font-size: 12px;
+      color: #536471;
+      line-height: 1.5;
+    }
+
+    .history-row:last-child {
+      border-bottom: none;
+    }
+
+    .history-row strong {
+      color: #0f1419;
+    }
     
     .help-text {
       font-size: 12px;
@@ -310,6 +326,14 @@
         <span class="stat-value" id="totalRetweets">0</span>
       </div>
       <div class="stat-item">
+        <span>Toplam Kontrol:</span>
+        <span class="stat-value" id="totalChecks">0</span>
+      </div>
+      <div class="stat-item">
+        <span>Toplam İncelenen Tweet:</span>
+        <span class="stat-value" id="totalChecked">0</span>
+      </div>
+      <div class="stat-item">
         <span>Son Kontrol:</span>
         <span class="stat-value" id="lastCheck">Henüz kontrol yapılmadı</span>
       </div>
@@ -317,6 +341,30 @@
         <span>Son Başarılı:</span>
         <span class="stat-value" id="lastSuccess">-</span>
       </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <label>Son Kontrol Detayı</label>
+    <div class="stats" id="lastRunBox">
+      <div class="stat-item"><span>Zaman:</span><span class="stat-value" id="runTime">-</span></div>
+      <div class="stat-item"><span>Tetikleyici:</span><span class="stat-value" id="runTrigger">-</span></div>
+      <div class="stat-item"><span>Mod:</span><span class="stat-value" id="runMode">-</span></div>
+      <div class="stat-item"><span>Hesap:</span><span class="stat-value" id="runUser">-</span></div>
+      <div class="stat-item"><span>İncelenen tweet:</span><span class="stat-value" id="runChecked">-</span></div>
+      <div class="stat-item"><span>Uygun bulunan:</span><span class="stat-value" id="runEligible">-</span></div>
+      <div class="stat-item"><span>Retweet gönderilen:</span><span class="stat-value" id="runRetweeted">-</span></div>
+      <div class="stat-item"><span>Atlanan (kayıt/reply/repost/reklam):</span><span class="stat-value" id="runSkipped">-</span></div>
+      <div class="stat-item"><span>Süre:</span><span class="stat-value" id="runDuration">-</span></div>
+      <div class="stat-item"><span>Sonuç:</span><span class="stat-value" id="runMessage">-</span></div>
+      <div class="stat-item"><span>Tweet ID'leri:</span><span class="stat-value" id="runIds">-</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <label>Geçmiş (son 10 kontrol)</label>
+    <div class="stats" id="runHistoryList">
+      <div class="help-text" id="runHistoryEmpty">Henüz kontrol geçmişi yok.</div>
     </div>
   </div>
   

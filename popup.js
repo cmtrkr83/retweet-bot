@@ -65,11 +65,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const response = await chrome.runtime.sendMessage({
         action: 'manualCheck'
       });
+
+      // Detaylı sonucu hemen ekrana bas (storage'a yazılmasını beklemeden)
+      const stats = response?.stats || response;
+      if (stats && (stats.checkedCount !== undefined || stats.retweetedIds !== undefined)) {
+        renderLastRun(stats);
+      }
       
       if (response && response.success) {
-        showStatus(response.message, 'success');
+        const s = response.stats || {};
+        const detail = `İncelenen: ${s.checkedCount ?? '-'}, Uygun: ${s.eligibleCount ?? '-'}, Gönderilen: ${(s.retweetedIds || []).length}`;
+        showStatus(`${response.message} (${detail})`, 'success');
       } else if (response && response.message) {
-        showStatus(response.message, 'error');
+        const s = response.stats || {};
+        if (s.checkedCount !== undefined) {
+          showStatus(`${response.message} (İncelenen: ${s.checkedCount}, Uygun: ${s.eligibleCount ?? 0})`, 'error');
+        } else {
+          showStatus(response.message, 'error');
+        }
       } else {
         showStatus('İşlem tamamlanamadı', 'error');
       }
@@ -118,6 +131,10 @@ function loadStats() {
     
     const totalRetweets = data.retweetHistory ? data.retweetHistory.length : 0;
     document.getElementById('totalRetweets').textContent = totalRetweets;
+
+    const totals = data.totalStats || {};
+    document.getElementById('totalChecks').textContent = totals.totalChecks ?? 0;
+    document.getElementById('totalChecked').textContent = totals.totalChecked ?? 0;
     
     if (data.lastCheck) {
       const lastCheckDate = new Date(data.lastCheck);
@@ -132,6 +149,56 @@ function loadStats() {
     } else {
       document.getElementById('lastSuccess').textContent = 'Henüz başarılı retweet yok';
     }
+
+    if (data.lastRun) renderLastRun(data.lastRun);
+    renderHistory(data.runHistory || []);
+  });
+}
+
+function modeLabel(mode) {
+  if (mode === 'light') return 'Hafif (sekmesiz)';
+  if (mode === 'heavy') return 'Klasik (sekmeli)';
+  return mode || '-';
+}
+
+function triggerLabel(trigger) {
+  if (trigger === 'auto') return 'Otomatik';
+  if (trigger === 'manual') return 'Manuel';
+  return trigger || '-';
+}
+
+function renderLastRun(s) {
+  if (!s) return;
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('runTime', s.timestamp ? formatDate(new Date(s.timestamp)) + ' (' + new Date(s.timestamp).toLocaleString('tr-TR') + ')' : '-');
+  set('runTrigger', triggerLabel(s.trigger));
+  set('runMode', modeLabel(s.mode));
+  set('runUser', s.username ? '@' + s.username : '-');
+  set('runChecked', s.checkedCount ?? 0);
+  set('runEligible', s.eligibleCount ?? 0);
+  set('runRetweeted', s.retweetedIds ? s.retweetedIds.length : (s.retweetedCount ?? 0));
+  set('runSkipped', `${s.skippedAlready ?? 0} / ${s.skippedReply ?? 0} / ${s.skippedRepost ?? 0} / ${s.skippedAd ?? 0}`);
+  set('runDuration', s.durationMs ? (s.durationMs / 1000).toFixed(1) + ' sn' : '-');
+  set('runMessage', (s.success ? '✅ ' : 'ℹ️ ') + (s.message || '-'));
+  set('runIds', s.retweetedIds && s.retweetedIds.length ? s.retweetedIds.join(', ') : '-');
+}
+
+function renderHistory(history) {
+  const box = document.getElementById('runHistoryList');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!history.length) {
+    box.innerHTML = '<div class="help-text">Henüz kontrol geçmişi yok.</div>';
+    return;
+  }
+  history.slice(0, 10).forEach(h => {
+    const row = document.createElement('div');
+    row.className = 'history-row';
+    const time = h.timestamp ? new Date(h.timestamp).toLocaleString('tr-TR') : '-';
+    const ids = h.retweetedIds && h.retweetedIds.length ? `<br>ID: ${h.retweetedIds.join(', ')}` : '';
+    row.innerHTML = `<strong>${time}</strong> · ${triggerLabel(h.trigger)} · ${modeLabel(h.mode)} · @${h.username || '-'}<br>` +
+      `İncelenen: <strong>${h.checkedCount ?? 0}</strong> · Uygun: <strong>${h.eligibleCount ?? 0}</strong> · Gönderilen: <strong>${h.retweetedIds ? h.retweetedIds.length : 0}</strong>${ids}`;
+    box.appendChild(row);
   });
 }
 
