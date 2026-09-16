@@ -431,6 +431,145 @@ async function checkAndRetweet(trigger = 'manual') {
   }
 }
 
+async function waitForPageComplete(tabId, timeoutMs = 15000) {
+  await new Promise((resolve) => {
+    let completed = false;
+    const listener = (id, changeInfo) => {
+      if (id === tabId && changeInfo.status === 'complete' && !completed) {
+        completed = true;
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    setTimeout(() => {
+      if (!completed) {
+        completed = true;
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }, timeoutMs);
+  });
+}
+
+async function countArticles(tabId) {
+  try {
+    const r = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => document.querySelectorAll('article[data-testid="tweet"]').length
+    });
+    return r[0]?.result || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+async function waitForArticles(tabId, tries = 10, delayMs = 1500) {
+  for (let i = 0; i < tries; i++) {
+    await new Promise(r => setTimeout(r, delayMs));
+    const n = await countArticles(tabId);
+    console.log(`Tweet kontrolü ${i + 1}/${tries}: ${n} tweet bulundu`);
+    if (n > 0) {
+      console.log('✓ Tweetler yüklendi!');
+      return true;
+    }
+  }
+  return false;
+}
+
+async function scrollLoadTweets(tabId, budget) {
+  try {
+    const needCount = Math.min(Math.max(budget * 3, 10), 30);
+    for (let s = 0; s < 5; s++) {
+      const n = await countArticles(tabId);
+      console.log(`Scroll kontrol ${s + 1}/5: ${n}/${needCount} tweet`);
+      if (n >= needCount) break;
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => { window.scrollBy(0, window.innerHeight * 2); }
+      });
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => { window.scrollTo(0, 0); }
+    }).catch(() => {});
+  } catch (e) {
+    console.log('Scroll hatası (devam ediliyor):', e.message);
+  }
+  await new Promise(r => setTimeout(r, 1000));
+}
+
+// X Temmuz 2026 redesign: Posts ve Reposts ayrı sekmede. Reposts sekmesini
+// önce sayfa içindeki sekmeye tıklayarak açmayı dene, olmazsa /reposts URL'ine git.
+async function openRepostsTab(tabId, username, profileUrl) {
+  try {
+    const clickRes = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (uname) => {
+        const u = String(uname || '').toLowerCase();
+        const links = [...document.querySelectorAll('a[href]')];
+        const hrefs = [...new Set(
+          links.map(a => a.getAttribute('href')).filter(h => h && h.toLowerCase().includes('/' + u + '/'))
+        )].slice(0, 20);
+        let cand = links.find(a => String(a.getAttribute('href') || '').toLowerCase().includes('/reposts'));
+        if (!cand) {
+          const tabs = [...document.querySelectorAll('[role="tab"]')];
+          cand = tabs.find(el => /repost/i.test(el.textContent || ''));
+        }
+        if (cand) { cand.click(); return { clicked: true }; }
+        return { clicked: false, hrefs };
+      },
+      args: [username]
+    });
+    const cr = clickRes[0]?.result || {};
+    if (cr.clicked) {
+      console.log('Reposts sekmesine tıklandı');
+      if (await waitForArticles(tabId, 6, 1500)) return { ok: true, via: 'click' };
+      console.log('Tıklama sonrası tweet gelmedi, /reposts URL deneniyor...');
+    } else {
+      console.log('Reposts sekme linki bulunamadı, /reposts URL deneniyor...', (cr.hrefs || []).join(','));
+    }
+  } catch (e) {
+    console.log('Reposts sekme tıklama hatası:', e.message);
+  }
+  try {
+    await chrome.tabs.update(tabId, { url: `${profileUrl}/reposts` });
+    await waitForPageComplete(tabId);
+    if (await waitForArticles(tabId, 6, 1500)) return { ok: true, via: 'url' };
+    return { ok: false, via: 'url', hint: 'Reposts sekmesi açılamadı (/reposts boş geldi). Sekme adını profilde elle kontrol edin.' };
+  } catch (e) {
+    return { ok: false, via: 'url', hint: 'Reposts sekmesi hatası: ' + e.message };
+  }
+}
+
+async function processProfileTab(targetTab, profileUrl, username, tabKey, history, budget, retweetType) {
+  const tabLabel = tabKey === 'reposts' ? 'Reposts' : 'Posts';
+  console.log(`--- Sekme işleniyor: ${tabLabel} (bütçe: ${budget}) ---`);
+  await chrome.tabs.update(targetTab.id, { url: profileUrl });
+  await waitForPageComplete(targetTab.id);
+  const loaded = await waitForArticles(targetTab.id);
+  if (tabKey === 'reposts') {
+    const opened = await openRepostsTab(targetTab.id, username, profileUrl);
+    if (!opened.ok) {
+      return { success: false, message: `@${username} (${tabLabel} sekmesi): ${opened.hint || 'açılamadı.'}`, retweetedIds: [], failedIds: [], tabKey, stats: { checkedCount: 0, eligibleCount: 0, skippedAlready: 0, skippedReply: 0, skippedRepost: 0, skippedAd: 0 } };
+    }
+  } else if (!loaded) {
+    console.warn(`⚠ ${tabLabel} sekmesinde tweet yüklenemedi, yine de devam...`);
+  }
+  await scrollLoadTweets(targetTab.id, budget);
+  console.log('Script çalıştırılıyor...');
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: targetTab.id },
+    func: findAndRetweetLatest,
+    args: [username, history, budget, retweetType, tabKey]
+  });
+  const result = results[0].result;
+  result.tabKey = tabKey;
+  console.log(`${tabLabel} sonucu:`, result);
+  return result;
+}
+
 async function checkAndRetweetHeavy(trigger = 'manual', startMs = Date.now()) {
   try {
     console.log('checkAndRetweet başladı');
@@ -471,114 +610,63 @@ async function checkAndRetweetHeavy(trigger = 'manual', startMs = Date.now()) {
       console.log(`Yeni sekme oluşturuldu: ${targetTab.id}`);
     }
     
-    // Sayfayı yenile/yükle
-    console.log(`Sayfa yükleniyor: ${profileUrl}`);
-    await chrome.tabs.update(targetTab.id, { url: profileUrl });
-    
-    // Sayfanın tam yüklenmesini güvenilir şekilde bekle
-    await new Promise((resolve) => {
-      let completed = false;
-      
-      const listener = (tabId, changeInfo) => {
-        if (tabId === targetTab.id && changeInfo.status === 'complete' && !completed) {
-          completed = true;
-          chrome.tabs.onUpdated.removeListener(listener);
-          console.log('Sayfa yüklendi (complete event)');
-          resolve();
-        }
-      };
+    // X Temmuz 2026 sonrası: Posts ve Reposts ayrı sekmede. Ayar tipine göre
+    // gezilecek sekmeler belirlenir, tweet bütçesi sekmeler arası paylaşılır.
+    const jobs = retweetType === 'original' ? ['posts']
+      : retweetType === 'retweets' ? ['reposts']
+      : ['posts', 'reposts'];
+    console.log(`Gezilecek sekmeler: ${jobs.join(', ')} (tip: ${retweetType})`);
+    const tabName = (k) => k === 'reposts' ? 'Reposts' : 'Posts';
 
-      
-      chrome.tabs.onUpdated.addListener(listener);
-      
-      // Timeout - 15 saniye (MV3 service worker ömrü için kısa tutuldu)
-      setTimeout(() => {
-        if (!completed) {
-          completed = true;
-          chrome.tabs.onUpdated.removeListener(listener);
-          console.log('Sayfa yükleme timeout (15 saniye)');
-          resolve();
-        }
-      }, 15000);
-    });
-    
-    // Twitter'ın içeriğini yüklemesini bekle - tweet'lerin DOM'a gelmesini kontrol et
-    console.log('Tweet\'lerin yüklenmesi kontrol ediliyor...');
-    let tweetsLoaded = false;
-    
-    for (let i = 0; i < 10; i++) {
-      // Her 1.5 saniyede bir kontrol et (MV3 worker ömrü için toplam ~15sn)
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
+    const merged = {
+      retweetedIds: [], failedIds: [],
+      checkedCount: 0, eligibleCount: 0,
+      skippedAlready: 0, skippedReply: 0, skippedRepost: 0, skippedAd: 0,
+      messages: []
+    };
+
+    for (const tabKey of jobs) {
+      const remaining = tweetCount - merged.retweetedIds.length;
+      if (remaining <= 0) break;
+      const runHistory = retweetHistory.concat(merged.retweetedIds.map(id => ({ tweetId: id })));
+      let r;
       try {
-        const checkResults = await chrome.scripting.executeScript({
-          target: { tabId: targetTab.id },
-          func: () => {
-            const articles = document.querySelectorAll('article[data-testid="tweet"]');
-            return articles.length;
-          }
-        });
-        
-        const tweetCountInPage = checkResults[0].result;
-        console.log(`Tweet kontrolü ${i + 1}/10: ${tweetCountInPage} tweet bulundu`);
-        
-        if (tweetCountInPage > 0) {
-          tweetsLoaded = true;
-          console.log('✓ Tweetler yüklendi!');
-          break;
-        }
+        r = await processProfileTab(targetTab, profileUrl, data.targetUsername, tabKey, runHistory, remaining, retweetType);
       } catch (e) {
-        console.log(`Tweet kontrol hatası (deneme ${i + 1}):`, e.message);
+        console.warn(`${tabKey} sekme hatası:`, e.message);
+        r = { success: false, message: `hata: ${e.message}`, retweetedIds: [], failedIds: [], stats: { checkedCount: 0, eligibleCount: 0, skippedAlready: 0, skippedReply: 0, skippedRepost: 0, skippedAd: 0 } };
       }
-    }
-    
-    if (!tweetsLoaded) {
-      console.warn('⚠ Tweet yüklenemedi, yine de devam ediliyor...');
+      const st = r.stats || {};
+      merged.checkedCount += st.checkedCount || 0;
+      merged.eligibleCount += st.eligibleCount ?? (r.retweetedIds || []).length;
+      merged.skippedAlready += st.skippedAlready || 0;
+      merged.skippedReply += st.skippedReply || 0;
+      merged.skippedRepost += st.skippedRepost || 0;
+      merged.skippedAd += st.skippedAd || 0;
+      merged.retweetedIds.push(...(r.retweetedIds || []));
+      for (const f of (r.failedIds || [])) {
+        merged.failedIds.push(typeof f === 'string'
+          ? { tweetId: f, reason: `[${tabName(tabKey)}]` }
+          : { tweetId: f.tweetId, reason: (`[${tabName(tabKey)}] ${f.reason || ''}`).trim() });
+      }
+      if (r.message) merged.messages.push(`[${tabName(tabKey)}] ${r.message}`);
     }
 
-    // Yeterli tweet yüklenene kadar aşağı kaydır (reply/reklam elemesi sonrası
-    // ilk ekrandaki 5-7 tweet yetmeyebilir). Ücretli API yok, sadece DOM scroll.
-    try {
-      const needCount = Math.min(Math.max(tweetCount * 3, 10), 30);
-      for (let s = 0; s < 5; s++) {
-        const countRes = await chrome.scripting.executeScript({
-          target: { tabId: targetTab.id },
-          func: () => document.querySelectorAll('article[data-testid="tweet"]').length
-        });
-        const currentCount = countRes[0]?.result || 0;
-        console.log(`Scroll kontrol ${s + 1}/5: ${currentCount}/${needCount} tweet`);
-        if (currentCount >= needCount) break;
-        await chrome.scripting.executeScript({
-          target: { tabId: targetTab.id },
-          func: () => { window.scrollBy(0, window.innerHeight * 2); }
-        });
-        await new Promise(resolve => setTimeout(resolve, 1500));
+    const result = {
+      success: merged.retweetedIds.length > 0,
+      message: merged.messages.join(' | ') || 'Sekmelerden sonuç alınamadı',
+      retweetedIds: merged.retweetedIds,
+      failedIds: merged.failedIds,
+      stats: {
+        checkedCount: merged.checkedCount,
+        eligibleCount: merged.eligibleCount,
+        skippedAlready: merged.skippedAlready,
+        skippedReply: merged.skippedReply,
+        skippedRepost: merged.skippedRepost,
+        skippedAd: merged.skippedAd
       }
-      // En üste dön ki retweet butonları görünür olsun
-      await chrome.scripting.executeScript({
-        target: { tabId: targetTab.id },
-        func: () => { window.scrollTo(0, 0); }
-      }).catch(() => {});
-    } catch (e) {
-      console.log('Scroll hatası (devam ediliyor):', e.message);
-    }
-    
-    // Son güvenlik beklemesi
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    console.log('Script çalıştırılıyor...');
-    
-    // Content script'i çalıştır
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: targetTab.id },
-      func: findAndRetweetLatest,
-      args: [data.targetUsername, retweetHistory, tweetCount, retweetType]
-    });
-    
-    console.log('Script çalıştırıldı, sonuç alındı');
-    
-    const result = results[0].result;
-    console.log('Sonuç:', result);
+    };
+    console.log('Birleşik sonuç:', result);
     const pageStats = result.stats || {};
     const baseStats = {
       username: data.targetUsername,
@@ -640,7 +728,7 @@ async function checkAndRetweetHeavy(trigger = 'manual', startMs = Date.now()) {
 }
 
 // Sayfa içinde çalışacak fonksiyon
-function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retweetType = 'both') {
+function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retweetType = 'both', tabKey = 'posts') {
   return new Promise((resolve) => {
     try {
       const norm = (u) => String(u || '').trim().replace(/@/g, '').toLowerCase();
@@ -793,9 +881,10 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
       console.log(`Toplam ${eligibleTweets.length} uygun tweet bulundu`);
       
       if (eligibleTweets.length === 0) {
-        resolve({ 
-          success: false, 
-          message: `@${targetUsername} için retweet edilebilir tweet bulunamadı. Toplam ${articles.length} tweet kontrol edildi.`,
+        const tabNote = tabKey === 'reposts' ? 'Reposts sekmesinde ' : 'Posts sekmesinde ';
+        resolve({
+          success: false,
+          message: `@${targetUsername} için retweet edilebilir tweet bulunamadı. ${tabNote}${articles.length} tweet kontrol edildi (atlanan: kayıt ${skippedAlready}, reply ${skippedReply}, repost ${skippedRepost}, reklam ${skippedAd}).`,
           stats: { checkedCount: articles.length, eligibleCount: 0, skippedAlready, skippedReply, skippedRepost, skippedAd }
         });
         return;
@@ -826,12 +915,42 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
         }
 
         const tweet = eligibleTweets[index];
+        // Buton bulucu: X testid'leri dönem dönem değiştiriyor (retweet->repost).
+        // Sırayla dene: testid varyantları, sonra aria-label ile buton tara.
+        const findRetweetButton = (root) => {
+          const sels = [
+            '[data-testid="retweet"]',
+            '[data-testid="repost"]',
+            '[data-testid="retweetButton"]',
+            '[data-testid="repostButton"]'
+          ];
+          for (const s of sels) {
+            const el = root.querySelector(s);
+            if (el) return el;
+          }
+          const btns = root.querySelectorAll('button[aria-label], div[role="button"][aria-label]');
+          for (const b of btns) {
+            const l = (b.getAttribute('aria-label') || '').toLowerCase();
+            if (l.includes('repost') || l.includes('retweet') || l.includes('yeniden gönder') || l.includes('tekrar paylaş')) return b;
+          }
+          return null;
+        };
         // Zaten retweetlenmiş mi? (yeşil buton = aria-pressed true / label'da Undo)
-        const retweetButton = tweet.element.querySelector('[data-testid="retweet"]');
+        const retweetButton = findRetweetButton(tweet.element);
 
         if (!retweetButton) {
-          console.log(`Tweet ${tweet.tweetId} için retweet butonu bulunamadı`);
-          failedIds.push({ tweetId: tweet.tweetId, reason: 'retweet butonu yok' });
+          // Teşhis için karttaki testid'leri sebebe ekle (popup'ta görünsün)
+          let tidNote = 'kartta testid yok';
+          try {
+            const tids = [];
+            tweet.element.querySelectorAll('[data-testid]').forEach(el => {
+              const t = el.getAttribute('data-testid');
+              if (t && !tids.includes(t)) tids.push(t);
+            });
+            if (tids.length) tidNote = 'kart: ' + tids.slice(0, 12).join(',');
+          } catch (e) {}
+          console.log(`Tweet ${tweet.tweetId} için retweet butonu bulunamadı (${tidNote})`);
+          failedIds.push({ tweetId: tweet.tweetId, reason: 'buton yok [' + tidNote + ']' });
           // Bu tweet için retweet butonu bulunamadı, bir sonrakine geç
           setTimeout(() => retweetNext(index + 1), 500);
           return;
@@ -851,11 +970,14 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
           retweetButton.click();
           console.log(`Retweet butonu tıklandı: ${tweet.tweetId}`);
 
-          // Retweet onay menüsünü bekle ve tıkla
+          // Retweet onay menüsünü bekle ve tıkla (testid varyantları)
           setTimeout(() => {
-            const confirmButton = document.querySelector('[data-testid="retweetConfirm"]');
+            const confirmButton = document.querySelector('[data-testid="retweetConfirm"]')
+              || document.querySelector('[data-testid="repostConfirm"]')
+              || document.querySelector('[data-testid="retweetConfirmButton"]');
             // Zaten retweetliyse menüde "Undo repost" çıkar, confirm olmaz
-            const undoButton = document.querySelector('[data-testid="unretweetConfirm"]');
+            const undoButton = document.querySelector('[data-testid="unretweetConfirm"]')
+              || document.querySelector('[data-testid="unrepostConfirm"]');
 
             if (confirmButton) {
               confirmButton.click();
