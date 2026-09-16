@@ -1,4 +1,10 @@
 // Background Service Worker
+
+// Hafif mod (Fx API + GraphQL) KAPALI: X queryId'leri döndürdükçe GraphQL
+// 404 veriyor, uygun tweet bulunsa bile gönderemiyor. Sadece heavy (sekmeli)
+// mod kullanılıyor. Açmak için true yap.
+const USE_LIGHT_MODE = false;
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Twitter Auto Retweet eklentisi yüklendi');
   
@@ -377,7 +383,7 @@ async function checkAndRetweetLight(targetUsername, retweetHistory, tweetCount, 
 async function checkAndRetweet(trigger = 'manual') {
   const startMs = Date.now();
   try {
-    console.log('checkAndRetweet başladı (önce hafif mod denenecek)');
+    console.log('checkAndRetweet başladı (heavy mod)');
 
     const data = await chrome.storage.local.get(['targetUsername', 'retweetHistory', 'tweetCount', 'retweetType']);
     if (!data.targetUsername) {
@@ -389,7 +395,8 @@ async function checkAndRetweet(trigger = 'manual') {
     const tweetCount = data.tweetCount || 1;
     const retweetType = data.retweetType || 'both';
 
-    let lightFallbackInfo = null;
+  let lightFallbackInfo = null;
+    if (USE_LIGHT_MODE) {
     try {
       const lightResult = await checkAndRetweetLight(data.targetUsername, retweetHistory, tweetCount, retweetType);
       console.log('Hafif mod sonucu:', lightResult);
@@ -405,6 +412,9 @@ async function checkAndRetweet(trigger = 'manual') {
     } catch (lightError) {
       console.warn('Hafif mod başarısız, klasik moda düşülüyor:', lightError.message);
       // Eğer cookie yoksa kullanıcıya net söyle ama yine de heavy dene
+    }
+    } else {
+      console.log('Hafif mod kapalı (USE_LIGHT_MODE=false), direkt heavy çalışıyor...');
     }
 
     console.log('Klasik moda geçiliyor (heavy)...');
