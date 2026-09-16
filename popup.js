@@ -26,21 +26,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     setButtonLoading(saveBtn, true);
-    
+
     try {
-      const response = await chrome.runtime.sendMessage({
-        action: 'saveSettings',
-        username: username,
+      // 1) Önce doğrudan storage'a yaz (service worker uyusa bile kaybolmaz)
+      await chrome.storage.local.set({
+        targetUsername: username,
         tweetCount: tweetCount,
         checkInterval: checkInterval,
         retweetType: retweetType
       });
-      
-      if (response && response.success) {
-        showStatus(`Ayarlar kaydedildi! Otomatik kontrol her ${checkInterval} dakikada çalışacak.`, 'success');
+      // 2) Alarmı güncellemesi için background'a haber ver (başarısız olsa da ayar durur)
+      try {
+        await chrome.runtime.sendMessage({
+          action: 'saveSettings',
+          username: username,
+          tweetCount: tweetCount,
+          checkInterval: checkInterval,
+          retweetType: retweetType
+        });
+      } catch (alarmErr) {
+        console.warn('Alarm güncellenemedi (ayar yine de kaydedildi):', alarmErr?.message);
+      }
+
+      // 3) Doğrulama: gerçekten yazıldı mı?
+      const verify = await chrome.storage.local.get(['targetUsername', 'retweetType']);
+      if (verify.targetUsername === username && verify.retweetType === retweetType) {
+        showStatus(`Ayarlar kaydedildi! (@${username}, ${retweetTypeLabel(retweetType)}, her ${checkInterval} dk)`, 'success');
         loadStats();
       } else {
-        showStatus('Ayarlar kaydedilirken hata oluştu', 'error');
+        showStatus(`Uyarı: yazılan doğrulanamadı (okunan: @${verify.targetUsername || '?'} / ${verify.retweetType || '?'})`, 'error');
       }
     } catch (error) {
       showStatus('Ayarlar kaydedilirken hata oluştu: ' + error.message, 'error');
@@ -159,6 +173,13 @@ function modeLabel(mode) {
   if (mode === 'light') return 'Hafif (sekmesiz)';
   if (mode === 'heavy') return 'Klasik (sekmeli)';
   return mode || '-';
+}
+
+function retweetTypeLabel(t) {
+  if (t === 'original') return 'sadece kendi tweetleri';
+  if (t === 'retweets') return 'sadece retweetleri';
+  if (t === 'both') return 'her ikisi';
+  return t || '-';
 }
 
 function triggerLabel(trigger) {
