@@ -45,7 +45,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'saveSettings') {
     const checkInterval = request.checkInterval || 60;
-    const retweetType = request.retweetType || 'original';
+    const retweetType = request.retweetType || 'both';
     const cleanUsername = String(request.username || '').trim().replace(/@/g, '');
     
     chrome.storage.local.set({
@@ -387,7 +387,7 @@ async function checkAndRetweet(trigger = 'manual') {
     }
     const retweetHistory = data.retweetHistory || [];
     const tweetCount = data.tweetCount || 1;
-    const retweetType = data.retweetType || 'original';
+    const retweetType = data.retweetType || 'both';
 
     let lightFallbackInfo = null;
     try {
@@ -436,7 +436,7 @@ async function checkAndRetweetHeavy(trigger = 'manual', startMs = Date.now()) {
     
     const retweetHistory = data.retweetHistory || [];
     const tweetCount = data.tweetCount || 1;
-    const retweetType = data.retweetType || 'original';
+    const retweetType = data.retweetType || 'both';
     
     console.log(`Retweet geçmişinde ${retweetHistory.length} kayıt var`);
     
@@ -630,7 +630,7 @@ async function checkAndRetweetHeavy(trigger = 'manual', startMs = Date.now()) {
 }
 
 // Sayfa içinde çalışacak fonksiyon
-function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retweetType = 'original') {
+function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retweetType = 'both') {
   return new Promise((resolve) => {
     try {
       const norm = (u) => String(u || '').trim().replace(/@/g, '').toLowerCase();

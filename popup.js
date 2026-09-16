@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const username = usernameInput.value.trim().replace(/@/g, '');
     const tweetCount = parseInt(tweetCountSelect.value);
     const checkInterval = parseInt(checkIntervalSelect.value);
-    const retweetType = document.querySelector('input[name="retweetType"]:checked')?.value || 'original';
+    const retweetType = document.querySelector('input[name="retweetType"]:checked')?.value || 'both';
     
     if (!username) {
       showStatus('Lütfen bir kullanıcı adı girin', 'error');
