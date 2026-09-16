@@ -181,6 +181,14 @@ function renderLastRun(s) {
   set('runDuration', s.durationMs ? (s.durationMs / 1000).toFixed(1) + ' sn' : '-');
   set('runMessage', (s.success ? '✅ ' : 'ℹ️ ') + (s.message || '-'));
   set('runIds', s.retweetedIds && s.retweetedIds.length ? s.retweetedIds.join(', ') : '-');
+  // Başarısızlar varsa ID satırına ekle (nedeniyle birlikte)
+  if (s.failedIds && s.failedIds.length) {
+    const el = document.getElementById('runIds');
+    if (el) {
+      const fails = s.failedIds.map(f => typeof f === 'string' ? f : `${f.tweetId} (${f.reason || 'sebep yok'})`).join(', ');
+      el.textContent += ` | Başarısız: ${fails}`;
+    }
+  }
 }
 
 function renderHistory(history) {
@@ -196,8 +204,11 @@ function renderHistory(history) {
     row.className = 'history-row';
     const time = h.timestamp ? new Date(h.timestamp).toLocaleString('tr-TR') : '-';
     const ids = h.retweetedIds && h.retweetedIds.length ? `<br>ID: ${h.retweetedIds.join(', ')}` : '';
+    const fails = h.failedIds && h.failedIds.length
+      ? `<br>Başarısız: ${h.failedIds.map(f => typeof f === 'string' ? f : `${f.tweetId} (${f.reason || ''})`).join(', ')}`
+      : '';
     row.innerHTML = `<strong>${time}</strong> · ${triggerLabel(h.trigger)} · ${modeLabel(h.mode)} · @${h.username || '-'}<br>` +
-      `İncelenen: <strong>${h.checkedCount ?? 0}</strong> · Uygun: <strong>${h.eligibleCount ?? 0}</strong> · Gönderilen: <strong>${h.retweetedIds ? h.retweetedIds.length : 0}</strong>${ids}`;
+      `İncelenen: <strong>${h.checkedCount ?? 0}</strong> · Uygun: <strong>${h.eligibleCount ?? 0}</strong> · Gönderilen: <strong>${h.retweetedIds ? h.retweetedIds.length : 0}</strong>${ids}${fails}`;
     box.appendChild(row);
   });
 }

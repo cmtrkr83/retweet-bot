@@ -246,6 +246,8 @@ async function recordRun(run) {
     eligibleCount: run.eligibleCount || 0,
     retweetedCount: (run.retweetedIds || []).length,
     retweetedIds: run.retweetedIds || [],
+    failedIds: run.failedIds || [],
+    failedCount: (run.failedIds || []).length,
     skippedAlready: run.skippedAlready || 0,
     skippedReply: run.skippedReply || 0,
     skippedRepost: run.skippedRepost || 0,
@@ -329,24 +331,44 @@ async function checkAndRetweetLight(targetUsername, retweetHistory, tweetCount, 
 
   if (eligible.length === 0) {
     await chrome.storage.local.set({ lastCheck: new Date().toISOString() });
-    return { success: false, message: `@${targetUsername} için retweet edilebilir yeni tweet yok (hafif mod, ${items.length} kontrol edildi).`, mode: 'light', retweetedIds: [], ...stats };
+    return { success: false, message: `@${targetUsername} için retweet edilebilir yeni tweet yok (hafif mod, ${items.length} kontrol edildi).`, mode: 'light', retweetedIds: [], failedIds: [], ...stats };
   }
 
   // 2) Hafif yazma: GraphQL (tıklama yok, sekme yok)
+  // Kısmi başarı desteklenir: biri patlarsa diğerleri devam eder, sebebi kaydedilir.
   const retweetedIds = [];
+  const failedIds = [];
   for (const tweetId of eligible) {
     // Rate-limit dostu küçük gecikme
     await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
-    await retweetViaGraphQL(tweetId);
-    console.log(`[hafif mod] retweet OK: ${tweetId}`);
-    retweetedIds.push(tweetId);
+    try {
+      await retweetViaGraphQL(tweetId);
+      console.log(`[hafif mod] retweet OK: ${tweetId}`);
+      retweetedIds.push(tweetId);
+    } catch (e) {
+      const reason = String(e?.message || e).slice(0, 160);
+      console.warn(`[hafif mod] retweet BAŞARISIZ ${tweetId}: ${reason}`);
+      failedIds.push({ tweetId, reason });
+      // Duplicate/already-retweeted ise history'e ekle ki tekrar denenmesin
+      if (/already|duplicate|326|already retweeted/i.test(reason)) {
+        try { await saveRetweetsToHistory(targetUsername, [tweetId]); } catch (_) {}
+      }
+    }
   }
 
-  await saveRetweetsToHistory(targetUsername, retweetedIds);
+  if (retweetedIds.length > 0) {
+    await saveRetweetsToHistory(targetUsername, retweetedIds);
+  }
+  const failNote = failedIds.length
+    ? ` (${failedIds.length} başarısız: ${failedIds.map(f => f.tweetId).join(', ')})`
+    : '';
   return {
-    success: true,
-    message: `${retweetedIds.length} tweet retweet edildi (hafif mod, sekme açılmadı)!`,
+    success: retweetedIds.length > 0,
+    message: retweetedIds.length > 0
+      ? `${retweetedIds.length} tweet retweet edildi (hafif mod, sekme açılmadı)!${failNote}`
+      : `Hiç retweet gönderilemedi (hafif mod)${failNote}`,
     retweetedIds,
+    failedIds,
     mode: 'light',
     ...stats
   };
@@ -555,6 +577,7 @@ async function checkAndRetweetHeavy(trigger = 'manual', startMs = Date.now()) {
       checkedCount: pageStats.checkedCount || 0,
       eligibleCount: pageStats.eligibleCount ?? (result.retweetedIds || []).length,
       retweetedIds: result.retweetedIds || [],
+      failedIds: result.failedIds || [],
       skippedAlready: pageStats.skippedAlready || 0,
       skippedReply: pageStats.skippedReply || 0,
       skippedRepost: pageStats.skippedRepost || 0,
@@ -768,57 +791,83 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
         return;
       }
       
-      // Tweetleri sırayla retweet et
+      // Tweetleri sırayla retweet et (kısmi başarı raporlanır)
       let retweetedCount = 0;
       const retweetedIds = [];
-      
+      const failedIds = [];
+
       function retweetNext(index) {
         if (index >= eligibleTweets.length) {
           // Tüm tweetler işlendi
-          const message = `${retweetedCount} tweet başarıyla retweet edildi!`;
+          const failNote = failedIds.length
+            ? ` (${failedIds.length} başarısız: ${failedIds.map(f => f.tweetId).join(', ')})`
+            : '';
+          const ok = retweetedIds.length > 0;
           resolve({
-            success: true,
-            message: message,
+            success: ok,
+            message: ok
+              ? `${retweetedCount} tweet başarıyla retweet edildi!${failNote}`
+              : `Hiç retweet gönderilemedi.${failNote}`,
             retweetedIds: retweetedIds,
+            failedIds: failedIds,
             stats: { checkedCount: articles.length, eligibleCount: eligibleTweets.length, skippedAlready, skippedReply, skippedRepost, skippedAd }
           });
           return;
         }
-        
+
         const tweet = eligibleTweets[index];
+        // Zaten retweetlenmiş mi? (yeşil buton = aria-pressed true / label'da Undo)
         const retweetButton = tweet.element.querySelector('[data-testid="retweet"]');
-        
+
         if (!retweetButton) {
           console.log(`Tweet ${tweet.tweetId} için retweet butonu bulunamadı`);
+          failedIds.push({ tweetId: tweet.tweetId, reason: 'retweet butonu yok' });
           // Bu tweet için retweet butonu bulunamadı, bir sonrakine geç
           setTimeout(() => retweetNext(index + 1), 500);
           return;
         }
-        
+
         // İnsan benzeri gecikme ile retweet et
         setTimeout(() => {
+          // Tıklamadan önce "zaten retweetli" sinyalini yakala
+          const pressed = retweetButton.getAttribute('aria-pressed') === 'true';
+          const btnLabel = (retweetButton.getAttribute('aria-label') || '').toLowerCase();
+          if (pressed || btnLabel.includes('undo') || btnLabel.includes('geri al')) {
+            console.log(`Tweet ${tweet.tweetId} zaten retweetlenmiş görünüyor, atlanıyor`);
+            failedIds.push({ tweetId: tweet.tweetId, reason: 'X tarafında zaten retweetli' });
+            setTimeout(() => retweetNext(index + 1), 500);
+            return;
+          }
           retweetButton.click();
           console.log(`Retweet butonu tıklandı: ${tweet.tweetId}`);
-          
+
           // Retweet onay menüsünü bekle ve tıkla
           setTimeout(() => {
             const confirmButton = document.querySelector('[data-testid="retweetConfirm"]');
-            
+            // Zaten retweetliyse menüde "Undo repost" çıkar, confirm olmaz
+            const undoButton = document.querySelector('[data-testid="unretweetConfirm"]');
+
             if (confirmButton) {
               confirmButton.click();
               retweetedCount++;
               retweetedIds.push(tweet.tweetId);
               console.log(`Tweet retweet edildi: ${tweet.tweetId}`);
-              
+
               // Bir sonraki tweet için gecikme (Twitter rate limiting'den kaçınmak için)
               setTimeout(() => retweetNext(index + 1), 1500 + Math.random() * 1000);
             } else {
-              console.log('Retweet onay butonu bulunamadı');
+              // Açık menüyü kapatmaya çalış (ESC)
+              document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27 }));
+              const reason = undoButton
+                ? 'X tarafında zaten retweetli (Undo menüsü)'
+                : 'onay butonu yok (rate-limit/oturum olabilir)';
+              console.log(`Retweet onay butonu bulunamadı: ${tweet.tweetId} - ${reason}`);
+              failedIds.push({ tweetId: tweet.tweetId, reason });
               // Onay butonu bulunamadı, bir sonrakine geç
               setTimeout(() => retweetNext(index + 1), 500);
             }
           }, 500 + Math.random() * 500);
-          
+
         }, 300 + Math.random() * 700);
       }
       
