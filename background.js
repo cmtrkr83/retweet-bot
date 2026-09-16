@@ -46,9 +46,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'saveSettings') {
     const checkInterval = request.checkInterval || 60;
     const retweetType = request.retweetType || 'original';
+    const cleanUsername = String(request.username || '').trim().replace(/@/g, '');
     
     chrome.storage.local.set({
-      targetUsername: request.username,
+      targetUsername: cleanUsername,
       tweetCount: request.tweetCount || 1,
       checkInterval: checkInterval,
       retweetType: retweetType
@@ -97,6 +98,48 @@ const X_FEATURES = {
   responsive_web_enhance_cards_enabled: false
 };
 
+function normalizeUsername(u) {
+  return String(u || '').trim().replace(/@/g, '').toLowerCase();
+}
+
+function extractTweetIdFromUrl(url) {
+  if (!url) return null;
+  const m = String(url).match(/\/status\/(\d+)/);
+  return m ? m[1] : null;
+}
+
+// Fx API bazen {type:'thread', thread:[status,...]} döner. Üst seviye id'siz
+// kayıtları eleyip düz status listesine çevirir. Ücretli API yok, sadece şekil düzeltme.
+function flattenFxResults(results) {
+  const flat = [];
+  for (const entry of (results || [])) {
+    if (!entry) continue;
+    if (Array.isArray(entry.thread) && entry.thread.length) {
+      for (const inner of entry.thread) {
+        if (inner && (inner.id || inner.tweetID)) {
+          if (!inner.id && inner.tweetID) inner.id = String(inner.tweetID);
+          flat.push(inner);
+        }
+      }
+      continue;
+    }
+    if (entry.status && (entry.status.id || entry.status.tweetID)) {
+      const s = entry.status;
+      if (!s.id && s.tweetID) s.id = String(s.tweetID);
+      flat.push(s);
+      continue;
+    }
+    if (entry.id || entry.tweetID) {
+      if (!entry.id && entry.tweetID) entry.id = String(entry.tweetID);
+      // type:'status' ya da tipsiz düz kayıt
+      flat.push(entry);
+      continue;
+    }
+    // id'siz thread/tombstone gibi kayıtları sessizce atla (sayaç dışında)
+  }
+  return flat;
+}
+
 async function fetchTimelineViaFx(username, count = 10) {
   const url = `https://api.fxtwitter.com/2/profile/${encodeURIComponent(username)}/statuses?count=${Math.min(Math.max(count, 1), 20)}`;
   const res = await fetch(url, { method: 'GET' });
@@ -104,7 +147,7 @@ async function fetchTimelineViaFx(username, count = 10) {
   if (!res.ok) throw new Error(`Fx API hata: HTTP ${res.status}`);
   const data = await res.json();
   if (data.code !== 200) throw new Error(`Fx API hata: ${data.code} ${data.message || ''}`);
-  return data.results || [];
+  return flattenFxResults(data.results || []);
 }
 
 async function getXCookies() {
@@ -237,35 +280,41 @@ async function checkAndRetweetLight(targetUsername, retweetHistory, tweetCount, 
 
   const eligible = [];
   let skippedAlready = 0, skippedReply = 0, skippedRepost = 0;
-  const targetLower = targetUsername.toLowerCase().replace('@', '');
+  const targetLower = normalizeUsername(targetUsername);
   for (const item of items) {
-    if (!item?.id) continue;
+    const rawId = item?.id ?? item?.tweetID;
+    if (!rawId) continue;
+    const itemId = String(rawId);
     // Zaten retweet edilmiş mi?
-    if (retweetHistory.some(h => h.tweetId === String(item.id))) {
-      console.log(`[hafif mod] ${item.id} zaten geçmişte var, atlanıyor`);
+    if (retweetHistory.some(h => String(h.tweetId) === itemId)) {
+      console.log(`[hafif mod] ${itemId} zaten geçmişte var, atlanıyor`);
       skippedAlready++;
       continue;
     }
-    // Reply mi? (Fx: replying_to doluysa reply)
-    if (item.replying_to) {
-      console.log(`[hafif mod] ${item.id} reply, atlanıyor`);
+    // Reply mi? (Fx: replying_to veya replying_to_status doluysa reply)
+    // Not: quote tweet'lerde replying_to=null olur, orijinal sayılır (bilerek).
+    if (item.replying_to || item.replying_to_status) {
+      console.log(`[hafif mod] ${itemId} reply, atlanıyor`);
       skippedReply++;
       continue;
     }
     // Orijinal mi / repost mu? (Fx: reposted_by varsa hedef kullanıcının retweet'i)
-    const authorLower = (item.author?.screen_name || '').toLowerCase();
-    const isRepost = Boolean(item.reposted_by) || (authorLower && authorLower !== targetLower);
+    // author boşsa sadece reposted_by'ya güven (yanlış elemeyi önler).
+    const authorLower = normalizeUsername(item.author?.screen_name || '');
+    const hasRepostedBy = Boolean(item.reposted_by);
+    const authorMismatch = Boolean(authorLower) && authorLower !== targetLower;
+    const isRepost = hasRepostedBy || authorMismatch;
     if (retweetType === 'original' && isRepost) {
-      console.log(`[hafif mod] ${item.id} repost, atlanıyor (orijinal modu)`);
+      console.log(`[hafif mod] ${itemId} repost, atlanıyor (orijinal modu)`);
       skippedRepost++;
       continue;
     }
     if (retweetType === 'retweets' && !isRepost) {
-      console.log(`[hafif mod] ${item.id} orijinal, atlanıyor (retweet modu)`);
+      console.log(`[hafif mod] ${itemId} orijinal, atlanıyor (retweet modu)`);
       skippedRepost++;
       continue;
     }
-    eligible.push(String(item.id));
+    eligible.push(itemId);
     if (eligible.length >= tweetCount) break;
   }
 
@@ -318,14 +367,19 @@ async function checkAndRetweet(trigger = 'manual') {
     const tweetCount = data.tweetCount || 1;
     const retweetType = data.retweetType || 'original';
 
+    let lightFallbackInfo = null;
     try {
       const lightResult = await checkAndRetweetLight(data.targetUsername, retweetHistory, tweetCount, retweetType);
       console.log('Hafif mod sonucu:', lightResult);
-      // Hafif modda "yeni tweet yok" da geçerli sonuçtur, heavy'e düşme
-      if (lightResult.success || lightResult.mode === 'light') {
+      // Başarılı retweet varsa bitir. "Uygun yok" sonucu KESİN DEĞİL:
+      // Fx şekli/thread/quote yüzünden yanlış eleme olabilir, heavy ile ikinci görüş al.
+      if (lightResult.success && (lightResult.retweetedIds || []).length > 0) {
         const entry = await recordRun({ ...lightResult, trigger, username: data.targetUsername, durationMs: Date.now() - startMs });
         return { ...lightResult, stats: entry };
       }
+      console.log(`Hafif modda uygun bulunamadı (${lightResult.checkedCount} incelendi), heavy ile doğrulanacak...`);
+      // lightResult'ı sakla: heavy de bulamazsa sebebi açıklamak için kullanacağız
+      lightFallbackInfo = lightResult;
     } catch (lightError) {
       console.warn('Hafif mod başarısız, klasik moda düşülüyor:', lightError.message);
       // Eğer cookie yoksa kullanıcıya net söyle ama yine de heavy dene
@@ -333,6 +387,10 @@ async function checkAndRetweet(trigger = 'manual') {
 
     console.log('Klasik moda geçiliyor (heavy)...');
     const heavyResult = await checkAndRetweetHeavy(trigger, startMs);
+    // Her iki mod da boşsa kullanıcıya birleşik bilgi ver (neden bulunamadığı anlaşılsın)
+    if (!heavyResult.success && lightFallbackInfo) {
+      heavyResult.message += ` [Hafif mod da ${lightFallbackInfo.checkedCount} tweet bakıp ${lightFallbackInfo.eligibleCount} uygun bulmuştu]`;
+    }
     return heavyResult;
   } catch (error) {
     console.error('checkAndRetweet hatası:', error);
@@ -445,6 +503,33 @@ async function checkAndRetweetHeavy(trigger = 'manual', startMs = Date.now()) {
     if (!tweetsLoaded) {
       console.warn('⚠ Tweet yüklenemedi, yine de devam ediliyor...');
     }
+
+    // Yeterli tweet yüklenene kadar aşağı kaydır (reply/reklam elemesi sonrası
+    // ilk ekrandaki 5-7 tweet yetmeyebilir). Ücretli API yok, sadece DOM scroll.
+    try {
+      const needCount = Math.min(Math.max(tweetCount * 3, 10), 30);
+      for (let s = 0; s < 5; s++) {
+        const countRes = await chrome.scripting.executeScript({
+          target: { tabId: targetTab.id },
+          func: () => document.querySelectorAll('article[data-testid="tweet"]').length
+        });
+        const currentCount = countRes[0]?.result || 0;
+        console.log(`Scroll kontrol ${s + 1}/5: ${currentCount}/${needCount} tweet`);
+        if (currentCount >= needCount) break;
+        await chrome.scripting.executeScript({
+          target: { tabId: targetTab.id },
+          func: () => { window.scrollBy(0, window.innerHeight * 2); }
+        });
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+      // En üste dön ki retweet butonları görünür olsun
+      await chrome.scripting.executeScript({
+        target: { tabId: targetTab.id },
+        func: () => { window.scrollTo(0, 0); }
+      }).catch(() => {});
+    } catch (e) {
+      console.log('Scroll hatası (devam ediliyor):', e.message);
+    }
     
     // Son güvenlik beklemesi
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -525,10 +610,17 @@ async function checkAndRetweetHeavy(trigger = 'manual', startMs = Date.now()) {
 function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retweetType = 'original') {
   return new Promise((resolve) => {
     try {
+      const norm = (u) => String(u || '').trim().replace(/@/g, '').toLowerCase();
+      const targetLower = norm(targetUsername);
+      const extractId = (url) => {
+        if (!url) return null;
+        const m = String(url).match(/\/status\/(\d+)/);
+        return m ? m[1] : null;
+      };
       // Önce doğru sayfada olup olmadığını kontrol et
       const currentUrl = window.location.href;
-      
-      if (!currentUrl.includes(targetUsername)) {
+
+      if (!currentUrl.toLowerCase().includes(targetLower)) {
         // Kullanıcı profiline git
         window.location.href = `https://x.com/${targetUsername}`;
         setTimeout(() => {
@@ -552,21 +644,30 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
       let skippedAd = 0, skippedAlready = 0, skippedReply = 0, skippedRepost = 0;
       
       for (const article of articles) {
-        // Tweet linkini bul
-        const tweetLink = article.querySelector('a[href*="/status/"]');
-        if (!tweetLink) {
+        // Ana tweet linkini bul: zaman damgalı linki tercih et (quote içindeki
+        // gömülü linki değil, tweetin kendi linkini almak için).
+        const allLinks = article.querySelectorAll('a[href*="/status/"]');
+        if (!allLinks || allLinks.length === 0) {
           console.log('Tweet linki bulunamadı, atlanıyor');
           continue;
         }
-        
+        let tweetLink = allLinks[0];
+        for (const a of allLinks) {
+          if (a.querySelector('time')) { tweetLink = a; break; }
+        }
+
         const href = tweetLink.href;
-        
-        // Tweet ID'sini al
-        const currentTweetId = href.split('/status/')[1]?.split('?')[0];
+
+        // Tweet ID'sini al (/photo/1, ?s=xx gibi ekleri regex ile temizle)
+        const currentTweetId = extractId(href);
         if (!currentTweetId) {
           console.log('Tweet ID alınamadı, atlanıyor');
           continue;
         }
+
+        // Linkteki kullanıcı adı: repost'ta orijinal yazara işaret eder
+        let usernameFromLink = '';
+        try { usernameFromLink = norm(href.split('/')[3] || ''); } catch (e) { usernameFromLink = ''; }
 
         
         // Promoted/Reklam tweet kontrolü - sadece güvenilir göstergelere bak
@@ -593,18 +694,21 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
         }
         
         // Bu tweet daha önce retweet edilmiş mi kontrol et
-        const alreadyRetweeted = retweetHistory.some(item => item.tweetId === currentTweetId);
+        const alreadyRetweeted = (retweetHistory || []).some(item => String(item.tweetId) === currentTweetId);
         if (alreadyRetweeted) {
           console.log(`Tweet ${currentTweetId} zaten retweet edilmiş, atlanıyor`);
           skippedAlready++;
           continue;
         }
-        
+
         // Reply mi kontrol et (Türkçe + İngilizce, büyük/küçük harf duyarsız)
+        // article.textContent tüm kartı kapsar; olası varyasyonları geniş tuttuk.
         const articleTextLower = article.textContent.toLowerCase();
         const isReply = articleTextLower.includes('replying to') ||
                        articleTextLower.includes('yanıt olarak') ||
-                       articleTextLower.includes('yanit olarak');
+                       articleTextLower.includes('yanit olarak') ||
+                       articleTextLower.includes('yanıtlanan') ||
+                       articleTextLower.includes('kime yanıt');
         
         if (isReply) {
           console.log(`Tweet ${currentTweetId} bir reply, atlanıyor`);
@@ -612,14 +716,21 @@ function findAndRetweetLatest(targetUsername, retweetHistory, tweetCount, retwee
           continue;
         }
 
-        // Orijinal tweet mi, yoksa hedef kullanıcının retweet'i mi? (socialContext)
+        // Orijinal tweet mi, yoksa hedef kullanıcının retweet'i mi?
+        // Birincil sinyal: linkteki kullanıcı adı (en güvenilir).
+        // Yedek sinyal: socialContext yazısı (DOM değişirse diye).
         const socialContextEl = article.querySelector('[data-testid="socialContext"]');
         const socialText = socialContextEl ? socialContextEl.textContent.toLowerCase() : '';
-        const isRepostByUser = socialText.includes('repost') ||
+        const socialSaysRepost = socialText.includes('repost') ||
                                socialText.includes('reposted') ||
                                socialText.includes('retweet') ||
                                socialText.includes('yeniden gönder') ||
-                               socialText.includes('tekrar paylaştı');
+                               socialText.includes('tekrar paylaştı') ||
+                               socialText.includes('yeniden yayın');
+        const linkSaysRepost = Boolean(usernameFromLink) && usernameFromLink !== targetLower;
+        // socialContext yoksa linke güven; varsa ikisinden biri yetiyor.
+        // Hiç sinyal yoksa (boş kart) orijinal kabul et - yanlış elemeyi önler.
+        const isRepostByUser = linkSaysRepost || socialSaysRepost;
 
         if (retweetType === 'original' && isRepostByUser) {
           console.log(`Tweet ${currentTweetId} hedef kullanıcının retweet'i, atlanıyor (sadece orijinal modu)`);

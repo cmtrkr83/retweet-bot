@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Kaydet butonu
   saveBtn.addEventListener('click', async () => {
-    const username = usernameInput.value.trim().replace('@', '');
+    const username = usernameInput.value.trim().replace(/@/g, '');
     const tweetCount = parseInt(tweetCountSelect.value);
     const checkInterval = parseInt(checkIntervalSelect.value);
     const retweetType = document.querySelector('input[name="retweetType"]:checked')?.value || 'original';
@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Şimdi kontrol et butonu
   checkBtn.addEventListener('click', async () => {
-    const username = usernameInput.value.trim().replace('@', '');
+    const username = usernameInput.value.trim().replace(/@/g, '');
     
     if (!username) {
       showStatus('Lütfen önce bir kullanıcı adı girin ve kaydedin', 'error');
