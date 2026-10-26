@@ -1,120 +1,83 @@
-# Twitter Auto Retweet - Chrome Eklentisi
+# 🔁 Twitter Auto Retweet
 
-Belirli bir Twitter/X hesabının son tweetini otomatik olarak retweet eden Chrome eklentisi.
+> A Chrome extension that automatically retweets a chosen X/Twitter account on a schedule — with history, filters and human-like delays.
 
-## ✨ Özellikler
+[![Chrome Extension](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/)
+[![JavaScript](https://img.shields.io/badge/JavaScript-vanilla-F7DF1E?style=flat-square&logo=javascript&logoColor=black)](https://developer.mozilla.org/docs/Web/JavaScript)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-- 🔄 **Otomatik Retweet**: Seçtiğiniz sıklıkta (15/30/60 dk) belirttiğiniz hesabın tweetlerini retweet eder
-- 🔢 **Ayarlanabilir Sayı**: 1-10 arası geriye dönük tweet sayısı seçebilirsiniz
-- 🎯 **Tweet Tipi Seçimi**:
-  - Sadece orijinal tweetler
-  - Sadece kullanıcının retweet ettikleri
-  - Her ikisi birden
-- 💾 **Geçmiş Kaydı**: Hangi tweetlerin retweet edildiğini kaydeder (tekrar retweet etmez, son 200 kayıt tutulur)
-- 🎯 **Akıllı Kontrol**: Aynı tweeti birden fazla kez retweet etmez
-- 🤖 **İnsan Benzeri**: Rastgele gecikmelerle doğal davranış sergiler
-- 📊 **İstatistikler**: Toplam retweet sayısı ve son kontrol zamanı
-- 🖱️ **Manuel Kontrol**: İstediğiniz zaman manuel kontrol yapabilirsiniz
+<p align="center">
+  <a href="https://www.buymeacoffee.com/cmtrkr"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
+</p>
 
-## 📦 Kurulum
+Twitter Auto Retweet is a personal-use Chrome extension for keeping up with one account's posts. Set a username, choose a check interval (15, 30 or 60 minutes), pick how many recent tweets to consider, and let the extension retweet only items it has not seen before. It stores the last 200 tweet IDs locally and skips replies and promoted posts.
 
-### Adım 1: Dosyaları İndirin
-Tüm eklenti dosyalarını bir klasöre kaydedin:
-- manifest.json
-- background.js
-- popup.html
-- popup.js
-- icon16.png
-- icon48.png
-- icon128.png
+It uses your existing logged-in X session. There is no paid API, no token, no password field and no server.
 
-### Adım 2: Chrome'a Yükleyin
+## 📸 Screenshot
 
-1. Chrome tarayıcınızı açın
-2. Adres çubuğuna `chrome://extensions` yazın ve Enter'a basın
-3. Sağ üst köşede **"Geliştirici modu"** (Developer mode) seçeneğini açın
-4. **"Paketlenmemiş uzantı yükle"** (Load unpacked) butonuna tıklayın
-5. Eklenti dosyalarının bulunduğu klasörü seçin
-6. Eklenti yüklendi! ✅
+<p align="center">
+  <img src="docs/screenshots/popup.png" width="390" alt="Twitter Auto Retweet popup with settings and statistics">
+  <br>
+  <sub>The real extension popup: target account, schedule, tweet type, save/check buttons and statistics.</sub>
+</p>
 
-## 🚀 Kullanım
+## ✨ Features
 
-### İlk Kurulum
+- 🔄 **Scheduled retweets** — every 15, 30 or 60 minutes via the Chrome Alarms API.
+- 🔢 **Backlog control** — retweet the last 1–10 matching tweets per run.
+- 🎯 **Tweet type filter** — original tweets only, retweets only, or both.
+- 💾 **History** — last 200 retweeted tweet IDs, so nothing is posted twice.
+- 🤖 **Human-like behaviour** — randomized delays in the fallback UI mode.
+- 📊 **Statistics** — total retweets, checks, reviewed tweets, last check and last successful action.
+- 🧪 **Two modes** — a lightweight JSON path (FxTwitter public API + X GraphQL) and a classic browser-click fallback.
+- 🔒 **Local-only data** — settings and history stay in `chrome.storage.local`.
 
-1. Chrome araç çubuğunda eklenti ikonuna (🔄) tıklayın
-2. **"Takip Edilecek Kullanıcı Adı"** alanına Twitter kullanıcı adını girin
-   - Örnek: `elonmusk` (@ işareti olmadan)
-3. **"Kontrol Sıklığı"** seçeneğinden 15 / 30 / 60 dakika seçin
-4. **"Geriye Dönük Kaç Tweet Retweet Edilsin?"** seçeneğinden istediğiniz sayıyı seçin
-   - Örnek: Son 3 tweeti retweet etmek için "Son 3 tweeti" seçin
-5. **"Hangi Tweetler Retweet Edilsin?"** bölümünden istediğiniz tipi seçin:
-   - **Sadece kendi yazdığı tweetler**: Kullanıcının orijinal tweetleri
-   - **Sadece retweet ettikleri**: Kullanıcının başkalarından retweet ettikleri
-   - **Her ikisi**: Hem orijinal tweetler hem de retweetler
-5. **"Kaydet"** butonuna tıklayın
+## 🚀 Install
 
-### Otomatik Çalışma
+1. Download or clone this repository.
+2. Open `chrome://extensions`.
+3. Enable **Developer mode**.
+4. Click **Load unpacked** and select this folder.
+5. Open the extension popup, enter a username (without `@`), choose an interval and click **Kaydet**.
 
-- Eklenti seçtiğiniz sıklıkta (15/30/60 dk) otomatik olarak kontrol yapar
-- Yeni tweet varsa ve daha önce retweet edilmemişse otomatik retweet eder
-- Reply'ler ve reklam/promoted tweet'ler atlanır
+For automatic checks, keep the browser running and stay signed in to X. The extension can open a tab if needed.
 
-### Manuel Kontrol
+## ⚙️ How it works
 
-- **"Şimdi Kontrol Et"** butonuna tıklayarak anında kontrol yapabilirsiniz
-- İstatistikleri görmek için eklenti popup'ını açın
+1. `chrome.alarms` triggers a check at the chosen interval.
+2. **Lightweight mode:** the last tweets are fetched as JSON from the public FxTwitter API; retweeting uses X's `CreateRetweet` GraphQL endpoint with your existing cookies.
+3. **Fallback mode:** if the lightweight path fails (session, rate limit or a changed query ID), the extension opens the profile, finds `article[data-testid="tweet"]`, and clicks the retweet controls with delays.
+4. Replies, promoted posts and previously handled IDs are filtered out.
+5. The tweet ID is saved to history and the statistics are updated.
 
-## ⚙️ Nasıl Çalışır?
+## 🔒 Privacy and safety
 
-1. **Zamanlayıcı**: Chrome Alarms API ile seçilen sıklıkta (15/30/60 dk) tetiklenir
-2. **Hafif mod (öncelikli, sekme açmaz)**: FxTwitter public API ile son tweetleri JSON olarak çeker (auth gerektirmez), `CreateRetweet` GraphQL çağrısıyla retweet eder (girişli cookie'leri kullanır, ücretli API değil)
-3. **Klasik mod (fallback)**: Hafif mod başarısız olursa (oturum yok, rate-limit, queryId değişimi) eski yönteme düşer — profile gider, `article[data-testid="tweet"]` bulur
-4. **Filtreleme**: Reply ve geçmişte retweet edilenleri + tweet tipi (orijinal/retweet/ikisi) ayarına göre eler (hafif modda reklam dönmez)
-5. **Retweet**: Hafif modda tıklama yok; klasik modda `data-testid="retweet"` + `retweetConfirm` butonlarına insan benzeri gecikmelerle tıklar
-6. **Kayıt**: Tweet ID'sini kaydeder (tekrar retweet etmemek için, son 200 kayıt)
+- No paid API, no developer tokens and no password collection.
+- Read requests go to a public API; write requests go only to x.com under your own session.
+- Data never leaves Chrome's local storage.
+- Use the extension within X's terms. Avoid aggressive intervals and spam-like behaviour.
+- This is an unofficial tool and is not affiliated with X Corp.
 
-## 🔒 Güvenlik ve Gizlilik
+## 🛠️ Troubleshooting
 
-- ❌ **Ücretli API kullanmaz** - Token veya şifre gerektirmez, girişli tarayıcı cookie'siyle çalışır
-- ✅ Hafif modda okuma herkese açık Fx API'den yapılır, yazma sadece kendi oturumunla x.com'a gider
-- ✅ Verileriniz sadece Chrome'un yerel depolama alanında tutulur
-- ✅ Açık kaynak - kodu inceleyebilirsiniz
+| Problem | Fix |
+| --- | --- |
+| "Tweet bulunamadı" | Check the username (no `@`) and make sure the profile loads. |
+| Wrong account's tweet is retweeted | Check the tweet-type filter; replies are always skipped. |
+| Retweet button not found | Refresh X and confirm you are signed in. |
+| Automatic checks stop | Ensure the extension is enabled and Chrome is running. |
 
-## ⚠️ Önemli Notlar
+## ❤️ Support
 
-1. **Twitter/X Oturum Açık Olmalı**: Tarayıcınızda Twitter/X'te oturum açmış olmanız gerekir
-2. **Sekme Açık Olabilir**: Twitter/X sekmesi kapalı olsa bile çalışır (gerekirse yeni sekme açar)
-3. **Rate Limiting**: Twitter'ın bot karşıtı sistemlerine takılmamak için insan benzeri gecikmeler eklenmiştir
-4. **Saatlik Kontrol**: Seçtiğiniz sıklıkta (15/30/60 dk) bir kez kontrol eder (spam'den kaçınmak için)
+If this extension saves you time, you can buy me a coffee:
 
-## 🛠️ Sorun Giderme
+<p align="center">
+  <a href="https://www.buymeacoffee.com/cmtrkr"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
+</p>
 
-### "Tweet bulunamadı" Hatası
-- Kullanıcı adının doğru olduğundan emin olun (@ işareti olmadan)
-- Twitter/X sayfasının tamamen yüklendiğinden emin olun
+## 📄 License
 
-### Yanlış Kullanıcının Tweeti Retweet Ediliyor
-- Tweet tipi ayarını kontrol edin (sadece orijinal / sadece retweet / her ikisi)
-- Reply'ler görmezden gelinir
-- Eğer sorun devam ediyorsa, eklentiyi kaldırıp tekrar yükleyin
+[MIT](LICENSE) © 2026 Cem Türker.
 
-### "Retweet butonu bulunamadı" Hatası
-- Sayfayı yenileyin
-- Twitter oturumunuzun açık olduğunu kontrol edin
-
-### Otomatik Retweet Çalışmıyor
-- Eklentinin aktif olduğunu kontrol edin (`chrome://extensions`)
-- Chrome'un arka planda çalıştığından emin olun
-- Bilgisayarınızın internet bağlantısını kontrol edin
-
-## 📝 Lisans
-
-Bu proje kişisel kullanım için oluşturulmuştur. Dilediğiniz gibi değiştirebilir ve kullanabilirsiniz.
-
-## 🤝 Katkıda Bulunma
-
-Önerileriniz ve geliştirme fikirleriniz için issue açabilirsiniz.
-
----
-
-**Not**: Bu eklenti Twitter/X'in kullanım şartlarına uygun olarak kullanılmalıdır. Spam veya kötüye kullanımdan kaçının.
+Twitter Auto Retweet is an independent project and is not affiliated with X Corp.
